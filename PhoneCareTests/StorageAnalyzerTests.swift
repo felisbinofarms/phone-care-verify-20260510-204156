@@ -3,6 +3,7 @@ import Foundation
 @testable import PhoneCare
 
 @Suite("StorageAnalyzer")
+@MainActor
 struct StorageAnalyzerTests {
 
     // MARK: - StorageCategoryData
