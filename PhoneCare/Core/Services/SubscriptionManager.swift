@@ -2,6 +2,16 @@ import Foundation
 import StoreKit
 import OSLog
 
+protocol StoreKitProductLoading: Sendable {
+    func loadProducts(ids: Set<String>) async throws -> [Product]
+}
+
+struct DefaultStoreKitProductLoader: StoreKitProductLoading {
+    func loadProducts(ids: Set<String>) async throws -> [Product] {
+        try await Product.products(for: ids)
+    }
+}
+
 @MainActor
 @Observable
 final class SubscriptionManager {
@@ -32,6 +42,7 @@ final class SubscriptionManager {
 
     private var transactionListener: Task<Void, Never>?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "PhoneCare", category: "SubscriptionManager")
+    private let productLoader: StoreKitProductLoading
 
     private static let isPremiumKey = "PhoneCare_isPremium"
     #if DEBUG
@@ -59,7 +70,8 @@ final class SubscriptionManager {
 
     // MARK: - Init
 
-    init() {
+    init(productLoader: StoreKitProductLoading = DefaultStoreKitProductLoader()) {
+        self.productLoader = productLoader
         // Restore cached premium state for instant UI.
         let cachedPremium = UserDefaults.standard.bool(forKey: Self.isPremiumKey)
         #if DEBUG
@@ -88,7 +100,7 @@ final class SubscriptionManager {
 
         do {
             let ids = ProductID.allCases.map(\.rawValue)
-            let storeProducts = try await Product.products(for: Set(ids))
+            let storeProducts = try await productLoader.loadProducts(ids: Set(ids))
             products = storeProducts.sorted { $0.price < $1.price }
             logger.info("Loaded \(storeProducts.count) products.")
         } catch {
