@@ -39,9 +39,12 @@ final class PaywallViewModel {
         }
         products = subscriptionManager.products
         isLoadingProducts = false
-        // Default select the middle (monthly) product
+        // Default select the monthly plan, falling back to the cheapest available product
+        // if no monthly SKU has loaded. Looking up by SubscriptionPeriod is robust to
+        // future SKU additions (e.g. family plans) that would shift array indices.
         if selectedProduct == nil {
-            selectedProduct = products.indices.contains(1) ? products[1] : products.first
+            selectedProduct = products.first(where: { $0.subscription?.subscriptionPeriod.unit == .month })
+                ?? products.first
         }
     }
 
