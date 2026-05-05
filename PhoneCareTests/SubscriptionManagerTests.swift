@@ -1,6 +1,11 @@
 import Testing
 import Foundation
+import StoreKit
 @testable import PhoneCare
+
+private struct MockProductLoader: StoreKitProductLoading {
+    func loadProducts(ids: Set<String>) async throws -> [Product] { [] }
+}
 
 @Suite("SubscriptionManager")
 @MainActor
@@ -119,16 +124,15 @@ struct SubscriptionManagerTests {
 
     @Test("loadProducts in test environment does not crash")
     func loadProducts_testEnvironment_doesNotCrash() async {
-        let manager = SubscriptionManager()
+        let manager = SubscriptionManager(productLoader: MockProductLoader())
         await manager.loadProducts()
-        // StoreKit is unavailable in unit test environment; products may be empty.
         // The key invariant: isLoading must be false after the call completes.
         #expect(manager.isLoading == false)
     }
 
     @Test("loadProducts leaves isLoading false after completion")
     func loadProducts_isLoading_falseAfterCompletion() async {
-        let manager = SubscriptionManager()
+        let manager = SubscriptionManager(productLoader: MockProductLoader())
         #expect(manager.isLoading == false)
         await manager.loadProducts()
         #expect(manager.isLoading == false)
