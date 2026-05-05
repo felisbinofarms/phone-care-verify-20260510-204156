@@ -411,7 +411,7 @@ final class ContactAnalyzer {
 
     static func normalizePhoneNumber(_ phone: String) -> String {
         let digits = phone.filter { $0.isNumber }
-        return String(digits.suffix(7))
+        return String(digits.suffix(10))
     }
 }
 
