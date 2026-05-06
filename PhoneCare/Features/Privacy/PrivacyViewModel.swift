@@ -23,6 +23,7 @@ final class PrivacyViewModel {
     // MARK: - Load
 
     func load(permissionManager: PermissionManager) async {
+        guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
 
