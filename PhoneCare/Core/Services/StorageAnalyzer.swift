@@ -68,6 +68,7 @@ final class StorageAnalyzer {
     private(set) var isAnalyzing: Bool = false
     private(set) var progress: Double = 0.0
     private(set) var statusMessage: String = ""
+    private(set) var errorMessage: String?
 
     // MARK: - Private
 
@@ -79,6 +80,7 @@ final class StorageAnalyzer {
         isAnalyzing = true
         progress = 0.0
         statusMessage = "Checking storage..."
+        errorMessage = nil
 
         defer {
             isAnalyzing = false
@@ -86,7 +88,18 @@ final class StorageAnalyzer {
         }
 
         // Step 1: Get total and available capacity
-        let (total, available, recoverable) = fetchDiskCapacity()
+        guard let (total, available, recoverable) = fetchDiskCapacity() else {
+            errorMessage = "Could not read device storage. Try again."
+            statusMessage = ""
+            let emptyResult = StorageAnalysisResult(
+                totalBytes: 0,
+                availableBytes: 0,
+                recoverableBytes: 0,
+                categories: []
+            )
+            result = emptyResult
+            return emptyResult
+        }
         progress = 0.3
         statusMessage = "Reading storage details..."
 
@@ -178,7 +191,7 @@ final class StorageAnalyzer {
 
     // MARK: - Private Helpers
 
-    private func fetchDiskCapacity() -> (total: Int64, available: Int64, recoverable: Int64) {
+    private func fetchDiskCapacity() -> (total: Int64, available: Int64, recoverable: Int64)? {
         do {
             let homeURL = URL(fileURLWithPath: NSHomeDirectory())
             let values = try homeURL.resourceValues(forKeys: [
@@ -191,10 +204,11 @@ final class StorageAnalyzer {
             let available = values.volumeAvailableCapacityForImportantUsage ?? 0
             let recoverable = values.volumeAvailableCapacityForOpportunisticUsage ?? available
 
+            guard total > 0 else { return nil }
             return (total, available, recoverable)
         } catch {
             logger.error("Failed to read disk capacity: \(error.localizedDescription)")
-            return (0, 0, 0)
+            return nil
         }
     }
 

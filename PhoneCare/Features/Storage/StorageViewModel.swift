@@ -27,6 +27,11 @@ final class StorageViewModel {
 
         do {
             if let scan = try dataManager.latestScanResult() {
+                guard scan.totalStorage > 0 else {
+                    // Cached scan was a failed-fetch zero-result; try live system fetch instead.
+                    loadSystemStorage()
+                    return
+                }
                 totalStorage = scan.totalStorage
                 usedStorage = scan.usedStorage
                 freeStorage = scan.freeStorage
