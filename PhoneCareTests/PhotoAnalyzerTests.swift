@@ -1,6 +1,37 @@
 import Testing
 import Foundation
+import Photos
 @testable import PhoneCare
+
+private let testLargeVideoThreshold: Int64 = 50 * 1024 * 1024
+
+private func makeAssetInfo(
+    id: String = UUID().uuidString,
+    mediaType: PHAssetMediaType = .image,
+    mediaSubtypes: PHAssetMediaSubtype = [],
+    pixelWidth: Int = 4032,
+    pixelHeight: Int = 3024,
+    estimatedFileSize: Int64 = 3_000_000,
+    creationDate: Date? = Date(timeIntervalSince1970: 1_700_000_000),
+    burstIdentifier: String? = nil,
+    burstSelectionTypes: PHAssetBurstSelectionType = [],
+    duration: Double = 0,
+    isScreenRecording: Bool = false
+) -> AssetInfo {
+    AssetInfo(
+        identifier: id,
+        creationDate: creationDate,
+        mediaType: mediaType,
+        mediaSubtypes: mediaSubtypes,
+        pixelWidth: pixelWidth,
+        pixelHeight: pixelHeight,
+        estimatedFileSize: estimatedFileSize,
+        burstIdentifier: burstIdentifier,
+        burstSelectionTypes: burstSelectionTypes,
+        duration: duration,
+        isScreenRecording: isScreenRecording
+    )
+}
 
 @Suite("PhotoAnalyzer")
 struct PhotoAnalyzerTests {
@@ -324,5 +355,143 @@ struct PhotoAnalyzerTests {
         )
         #expect(group.estimatedSavingsBytes == savings)
         #expect(group.duplicateIdentifiers == ["b2", "b3", "b4"])
+    }
+
+    // MARK: - analyzeAssets (pure function) — #102
+
+    @Test("analyzeAssets with empty input returns an empty result")
+    func analyzeAssets_emptyInput_returnsEmptyResult() async {
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [],
+            totalCount: 0,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.totalPhotos == 0)
+        #expect(result.duplicateGroups.isEmpty)
+        #expect(result.screenshotIdentifiers.isEmpty)
+        #expect(result.largeVideoIdentifiers.isEmpty)
+        #expect(result.blurryIdentifiers.isEmpty)
+    }
+
+    @Test("analyzeAssets classifies a screenshot in screenshotIdentifiers, NOT in blurryIdentifiers")
+    func analyzeAssets_screenshotsAreClassifiedNotBlurry() async {
+        let screenshot = makeAssetInfo(
+            id: "screenshot-1",
+            mediaSubtypes: .photoScreenshot,
+            // tiny dimensions that would otherwise hit the blurry pre-filter (< 500x500)
+            pixelWidth: 100,
+            pixelHeight: 100
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [screenshot],
+            totalCount: 1,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.screenshotIdentifiers == ["screenshot-1"])
+        #expect(!result.blurryIdentifiers.contains("screenshot-1"))
+    }
+
+    @Test("analyzeAssets groups two assets with the same burstIdentifier as a burst-sequence duplicate")
+    func analyzeAssets_burstSequence_isGroupedAsDuplicate() async {
+        let burstID = "burst-abc"
+        let frame1 = makeAssetInfo(
+            id: "frame-1",
+            burstIdentifier: burstID,
+            burstSelectionTypes: .userPick
+        )
+        let frame2 = makeAssetInfo(
+            id: "frame-2",
+            burstIdentifier: burstID,
+            burstSelectionTypes: []
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [frame1, frame2],
+            totalCount: 2,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.duplicateGroups.count == 1)
+        let group = result.duplicateGroups.first
+        #expect(group?.groupReason == .burstSequence)
+        #expect(group?.assetIdentifiers.contains("frame-1") == true)
+        #expect(group?.assetIdentifiers.contains("frame-2") == true)
+    }
+
+    @Test("analyzeAssets groups two assets with identical creation date and dimensions as exact duplicates")
+    func analyzeAssets_sameDateAndDimensions_isExactDuplicate() async {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let original = makeAssetInfo(
+            id: "orig",
+            pixelWidth: 4032,
+            pixelHeight: 3024,
+            creationDate: date
+        )
+        let copy = makeAssetInfo(
+            id: "copy",
+            pixelWidth: 4032,
+            pixelHeight: 3024,
+            creationDate: date
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [original, copy],
+            totalCount: 2,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.duplicateGroups.count == 1)
+        let group = result.duplicateGroups.first
+        #expect(group?.groupReason == .exactDuplicate)
+        #expect(group?.assetIdentifiers.contains("orig") == true)
+        #expect(group?.assetIdentifiers.contains("copy") == true)
+    }
+
+    @Test("analyzeAssets flags a video over the largeVideoThreshold")
+    func analyzeAssets_largeVideoOverThreshold_isFlagged() async {
+        let bigVideo = makeAssetInfo(
+            id: "big-video",
+            mediaType: .video,
+            estimatedFileSize: testLargeVideoThreshold + 1_000_000,
+            duration: 30
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [bigVideo],
+            totalCount: 1,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.largeVideoIdentifiers == ["big-video"])
+        #expect(result.largeVideoInfos.count == 1)
+        #expect(result.largeVideoInfos.first?.id == "big-video")
+    }
+
+    @Test("analyzeAssets does not flag a video under the largeVideoThreshold")
+    func analyzeAssets_smallVideo_underThreshold_notFlagged() async {
+        let smallVideo = makeAssetInfo(
+            id: "small-video",
+            mediaType: .video,
+            estimatedFileSize: 1_000_000,  // 1 MB, well under 50 MB threshold
+            duration: 5
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [smallVideo],
+            totalCount: 1,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.largeVideoIdentifiers.isEmpty)
+        #expect(result.largeVideoInfos.isEmpty)
     }
 }

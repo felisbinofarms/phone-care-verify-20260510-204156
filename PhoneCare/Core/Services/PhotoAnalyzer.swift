@@ -81,6 +81,27 @@ struct LargeVideoInfo: Sendable, Identifiable {
     let isScreenRecording: Bool
 }
 
+// MARK: - Asset Info DTO
+
+/// Sendable DTO projection of a `PHAsset`'s analysis-relevant metadata.
+/// `PhotoAnalyzer` enumerates real `PHAsset`s into `[AssetInfo]` once; the rest
+/// of the analysis logic operates on this DTO. Tests construct synthetic
+/// `[AssetInfo]` arrays and call `PhotoAnalyzer.analyzeAssets(...)` directly,
+/// bypassing the unmockable PHKit fetch.
+struct AssetInfo: Sendable {
+    let identifier: String
+    let creationDate: Date?
+    let mediaType: PHAssetMediaType
+    let mediaSubtypes: PHAssetMediaSubtype
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let estimatedFileSize: Int64
+    let burstIdentifier: String?
+    let burstSelectionTypes: PHAssetBurstSelectionType
+    let duration: Double
+    let isScreenRecording: Bool
+}
+
 // MARK: - Photo Analysis Result
 
 struct PhotoAnalysisResult: Sendable {
@@ -220,15 +241,7 @@ final class PhotoAnalyzer {
     private static func performAnalysis(
         largeVideoThreshold: Int64
     ) async -> PhotoAnalysisResult {
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.includeHiddenAssets = false
-        // Include all burst frames so we can detect burst sequences
-        fetchOptions.includeAllBurstAssets = true
-        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-
-        let allAssets = PHAsset.fetchAssets(with: fetchOptions)
-        let totalCount = allAssets.count
-
+        let (assets, totalCount) = fetchAllAssets()
         guard totalCount > 0 else {
             return PhotoAnalysisResult(
                 totalPhotos: 0,
@@ -238,21 +251,25 @@ final class PhotoAnalyzer {
                 blurryIdentifiers: []
             )
         }
+        return await analyzeAssets(
+            assets,
+            totalCount: totalCount,
+            largeVideoThreshold: largeVideoThreshold
+        )
+    }
 
-        // Collect asset metadata
-        struct AssetInfo: Sendable {
-            let identifier: String
-            let creationDate: Date?
-            let mediaType: PHAssetMediaType
-            let mediaSubtypes: PHAssetMediaSubtype
-            let pixelWidth: Int
-            let pixelHeight: Int
-            let estimatedFileSize: Int64
-            let burstIdentifier: String?
-            let burstSelectionTypes: PHAssetBurstSelectionType
-            let duration: Double
-            let isScreenRecording: Bool
-        }
+    /// Enumerates the real photo library and projects each `PHAsset` into a
+    /// Sendable `AssetInfo`. The PHKit-only half of the analysis pipeline;
+    /// tests bypass this and call `analyzeAssets(...)` with synthetic data.
+    private static func fetchAllAssets() -> (assets: [AssetInfo], totalCount: Int) {
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.includeHiddenAssets = false
+        // Include all burst frames so we can detect burst sequences
+        fetchOptions.includeAllBurstAssets = true
+        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+
+        let allAssets = PHAsset.fetchAssets(with: fetchOptions)
+        let totalCount = allAssets.count
 
         var assetInfos: [AssetInfo] = []
         assetInfos.reserveCapacity(totalCount)
@@ -297,6 +314,19 @@ final class PhotoAnalyzer {
             ))
         }
 
+        return (assetInfos, totalCount)
+    }
+
+    /// Pure analysis logic — accepts pre-projected `[AssetInfo]` and returns
+    /// the analysis result. Tests call this directly with synthetic data and
+    /// pass `skipSimilarShotsGrouping: true` to bypass the perceptual-hash
+    /// thumbnail loading (which requires real PHAsset identifiers).
+    static func analyzeAssets(
+        _ assetInfos: [AssetInfo],
+        totalCount: Int,
+        largeVideoThreshold: Int64,
+        skipSimilarShotsGrouping: Bool = false
+    ) async -> PhotoAnalysisResult {
         // ── 1. Screenshots ──────────────────────────────────────────────────────
         let screenshots = assetInfos.filter { $0.mediaSubtypes.contains(.photoScreenshot) }
         let screenshotIDs = screenshots.map(\.identifier)
@@ -437,77 +467,82 @@ final class PhotoAnalyzer {
         }
 
         // — 4c. Similar shots via 8×8 perceptual hash ————————————————————————————
-        let remaining2 = photos.filter { !processedIdentifiers.contains($0.identifier) }
-        let sortedForPHash = remaining2.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+        // Skipped by tests via `skipSimilarShotsGrouping: true`, since this loop
+        // calls `computePerceptualHash` which loads thumbnails via PHImageManager
+        // for real PHAsset identifiers — synthetic test identifiers don't resolve.
+        if !skipSimilarShotsGrouping {
+            let remaining2 = photos.filter { !processedIdentifiers.contains($0.identifier) }
+            let sortedForPHash = remaining2.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
 
-        let phashBucketWindow: TimeInterval = 60.0
-        var phashBuckets: [[AssetInfo]] = []
-        var currentBucket: [AssetInfo] = []
-        var bucketAnchorDate: Date?
+            let phashBucketWindow: TimeInterval = 60.0
+            var phashBuckets: [[AssetInfo]] = []
+            var currentBucket: [AssetInfo] = []
+            var bucketAnchorDate: Date?
 
-        for photo in sortedForPHash {
-            guard let date = photo.creationDate else { continue }
-            if let anchor = bucketAnchorDate, date.timeIntervalSince(anchor) <= phashBucketWindow {
-                currentBucket.append(photo)
-            } else {
-                if currentBucket.count >= 2 { phashBuckets.append(currentBucket) }
-                currentBucket = [photo]
-                bucketAnchorDate = date
-            }
-        }
-        if currentBucket.count >= 2 { phashBuckets.append(currentBucket) }
-
-        for bucket in phashBuckets {
-            // Compute hashes for all photos in this time window
-            var hashPairs: [(info: AssetInfo, hash: UInt64)] = []
-            for info in bucket {
-                if let h = await computePerceptualHash(identifier: info.identifier) {
-                    hashPairs.append((info, h))
+            for photo in sortedForPHash {
+                guard let date = photo.creationDate else { continue }
+                if let anchor = bucketAnchorDate, date.timeIntervalSince(anchor) <= phashBucketWindow {
+                    currentBucket.append(photo)
+                } else {
+                    if currentBucket.count >= 2 { phashBuckets.append(currentBucket) }
+                    currentBucket = [photo]
+                    bucketAnchorDate = date
                 }
             }
-            guard hashPairs.count >= 2 else { continue }
+            if currentBucket.count >= 2 { phashBuckets.append(currentBucket) }
 
-            // Union-Find to cluster similar photos
-            let count = hashPairs.count
-            var parent = Array(0..<count)
-
-            func findRoot(_ idx: Int) -> Int {
-                var idx = idx
-                while parent[idx] != idx { idx = parent[idx] }
-                return idx
-            }
-
-            for a in 0..<count {
-                for b in (a + 1)..<count {
-                    if hammingDistance(hashPairs[a].hash, hashPairs[b].hash) <= 12 {
-                        let ra = findRoot(a), rb = findRoot(b)
-                        if ra != rb { parent[ra] = rb }
+            for bucket in phashBuckets {
+                // Compute hashes for all photos in this time window
+                var hashPairs: [(info: AssetInfo, hash: UInt64)] = []
+                for info in bucket {
+                    if let h = await computePerceptualHash(identifier: info.identifier) {
+                        hashPairs.append((info, h))
                     }
                 }
-            }
+                guard hashPairs.count >= 2 else { continue }
 
-            var components: [Int: [AssetInfo]] = [:]
-            for idx in 0..<count {
-                let root = findRoot(idx)
-                components[root, default: []].append(hashPairs[idx].info)
-            }
+                // Union-Find to cluster similar photos
+                let count = hashPairs.count
+                var parent = Array(0..<count)
 
-            for (_, members) in components where members.count >= 2 {
-                guard members.allSatisfy({ !processedIdentifiers.contains($0.identifier) }) else { continue }
-                guard let best = members.max(by: { $0.estimatedFileSize < $1.estimatedFileSize }) ?? members.first else { continue }
-                let savings = members
-                    .filter { $0.identifier != best.identifier }
-                    .reduce(Int64(0)) { $0 + $1.estimatedFileSize }
+                func findRoot(_ idx: Int) -> Int {
+                    var idx = idx
+                    while parent[idx] != idx { idx = parent[idx] }
+                    return idx
+                }
 
-                duplicateGroups.append(DuplicateGroup(
-                    id: UUID().uuidString,
-                    assetIdentifiers: members.map(\.identifier),
-                    suggestedKeepIdentifier: best.identifier,
-                    estimatedSavingsBytes: savings,
-                    groupReason: .similarShots,
-                    keepReason: "This photo has the largest file size in the group, suggesting it captures the most detail."
-                ))
-                members.forEach { processedIdentifiers.insert($0.identifier) }
+                for a in 0..<count {
+                    for b in (a + 1)..<count {
+                        if hammingDistance(hashPairs[a].hash, hashPairs[b].hash) <= 12 {
+                            let ra = findRoot(a), rb = findRoot(b)
+                            if ra != rb { parent[ra] = rb }
+                        }
+                    }
+                }
+
+                var components: [Int: [AssetInfo]] = [:]
+                for idx in 0..<count {
+                    let root = findRoot(idx)
+                    components[root, default: []].append(hashPairs[idx].info)
+                }
+
+                for (_, members) in components where members.count >= 2 {
+                    guard members.allSatisfy({ !processedIdentifiers.contains($0.identifier) }) else { continue }
+                    guard let best = members.max(by: { $0.estimatedFileSize < $1.estimatedFileSize }) ?? members.first else { continue }
+                    let savings = members
+                        .filter { $0.identifier != best.identifier }
+                        .reduce(Int64(0)) { $0 + $1.estimatedFileSize }
+
+                    duplicateGroups.append(DuplicateGroup(
+                        id: UUID().uuidString,
+                        assetIdentifiers: members.map(\.identifier),
+                        suggestedKeepIdentifier: best.identifier,
+                        estimatedSavingsBytes: savings,
+                        groupReason: .similarShots,
+                        keepReason: "This photo has the largest file size in the group, suggesting it captures the most detail."
+                    ))
+                    members.forEach { processedIdentifiers.insert($0.identifier) }
+                }
             }
         }
 
