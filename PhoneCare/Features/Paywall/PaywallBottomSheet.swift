@@ -200,6 +200,7 @@ struct PaywallBottomSheet: View {
                         .foregroundStyle(Color.pcTextSecondary)
                 }
             }
+            .accessibilityLabel("Compare plans")
             .accessibilityHint(showComparePlans ? "Collapse plan comparison" : "Expand plan comparison")
 
             if showComparePlans {
@@ -250,6 +251,7 @@ struct PaywallBottomSheet: View {
         }
         .primaryCTAStyle()
         .disabled(viewModel.isPurchasing || viewModel.selectedProduct == nil)
+        .accessibilityLabel(purchaseButtonAccessibilityLabel)
     }
 
     private var purchaseButtonTitle: String {
@@ -258,6 +260,16 @@ struct PaywallBottomSheet: View {
             return "Start Free Trial"
         }
         return "Subscribe for \(product.displayPrice)"
+    }
+
+    private var purchaseButtonAccessibilityLabel: String {
+        guard let product = viewModel.selectedProduct else { return "Select a plan." }
+        let period = subscriptionManager.periodLabel(for: product)
+        if viewModel.hasFreeTrial(for: product),
+           let trial = viewModel.trialLabel(for: product) {
+            return "Start \(trial). After the trial you will be charged \(product.displayPrice) per \(period). Cancel anytime."
+        }
+        return "Subscribe for \(product.displayPrice) per \(period)."
     }
 
     // MARK: - Footer
