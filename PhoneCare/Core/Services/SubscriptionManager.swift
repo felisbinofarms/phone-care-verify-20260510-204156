@@ -211,12 +211,18 @@ final class SubscriptionManager {
         expirationDate = expiration
         isInTrial = isTrial
         isInGracePeriod = isGracePeriod
+
+        let newIsPremium: Bool
         #if DEBUG
-        isPremium = isActive || debugPremiumBypassEnabled
+        newIsPremium = isActive || debugPremiumBypassEnabled
         #else
-        isPremium = isActive
+        newIsPremium = isActive
         #endif
-        UserDefaults.standard.set(isPremium, forKey: Self.isPremiumKey)
+
+        // Persist BEFORE in-memory mutation so a process kill between the two
+        // writes cannot leave UserDefaults stale relative to in-memory state.
+        UserDefaults.standard.set(newIsPremium, forKey: Self.isPremiumKey)
+        isPremium = newIsPremium
     }
 
     // MARK: - Helpers
