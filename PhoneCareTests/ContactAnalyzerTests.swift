@@ -9,6 +9,7 @@ private final class MockContactStore: ContactStoreProviding {
     var contactsByIdentifier: [String: CNContact] = [:]
     var executeShouldThrow: Error?
     private(set) var executeCallCount = 0
+    private var fetchedIdentifiersInOrder: [String] = []
 
     func unifiedContact(
         withIdentifier identifier: String,
@@ -17,12 +18,24 @@ private final class MockContactStore: ContactStoreProviding {
         guard let contact = contactsByIdentifier[identifier] else {
             throw CNError(.recordDoesNotExist)
         }
+        fetchedIdentifiersInOrder.append(identifier)
         return contact
     }
 
     func execute(_ saveRequest: CNSaveRequest) throws {
         if let err = executeShouldThrow { throw err }
         executeCallCount += 1
+        // mergeContacts fetches keepIdentifier first, then each removeIdentifier
+        // in turn before constructing the save request. Drop everything after the
+        // first lookup to model the delete side effect — CNSaveRequest's pending
+        // operations aren't publicly introspectable, so this is the contract we
+        // enforce in the mock instead.
+        if fetchedIdentifiersInOrder.count > 1 {
+            for id in fetchedIdentifiersInOrder.dropFirst() {
+                contactsByIdentifier.removeValue(forKey: id)
+            }
+        }
+        fetchedIdentifiersInOrder.removeAll()
     }
 
     func enumerateContacts(
