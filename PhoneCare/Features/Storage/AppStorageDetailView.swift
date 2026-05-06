@@ -1,35 +1,22 @@
 import SwiftUI
 
-struct AppStorageWithScreenTimeView: View {
+struct AppStorageDetailView: View {
     let category: StorageCategory
     @Environment(DataManager.self) private var dataManager
 
     @State private var details: [ScanDetail] = []
-    @State private var screenTimeEnabled = false
-    @State private var appUsageData: [String: Double] = [:]
-    @State private var isLoadingScreenTime = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PCTheme.Spacing.lg) {
-                // Header
                 headerSection
 
-                // Screen Time Status
-                if !screenTimeEnabled {
-                    screenTimeDisabledCard
-                } else {
-                    screenTimeInsightCard
-                }
-
-                // App Breakdown
                 if !details.isEmpty {
                     appBreakdownSection
                 } else {
                     emptyState
                 }
 
-                // Tips
                 tipsSection
             }
             .padding(.horizontal, PCTheme.Spacing.md)
@@ -39,7 +26,6 @@ struct AppStorageWithScreenTimeView: View {
         .navigationTitle(category.name)
         .onAppear {
             loadDetails()
-            checkScreenTimeAvailability()
         }
     }
 
@@ -73,79 +59,11 @@ struct AppStorageWithScreenTimeView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Screen Time Card
-
-    private var screenTimeDisabledCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: PCTheme.Spacing.md) {
-                HStack(spacing: PCTheme.Spacing.sm) {
-                    Image(systemName: "hourglass.bottomhalf.fill")
-                        .font(.footnote)
-                        .foregroundStyle(Color.pcTextSecondary)
-
-                    Text("Screen Time Not Enabled")
-                        .typography(.subheadline)
-
-                    Spacer()
-
-                    Image(systemName: "info.circle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(Color.pcTextSecondary)
-                }
-
-                Text("Enable Screen Time in Settings → Screen Time to see app usage alongside storage. This helps identify heavy users that take up space.")
-                    .typography(.footnote, color: .pcTextSecondary)
-
-                Button {
-                    openScreenTimeSettings()
-                } label: {
-                    HStack {
-                        Text("Open Settings")
-                        Image(systemName: "arrow.up.right")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, PCTheme.Spacing.sm)
-                    .background(Color.pcAccent)
-                    .foregroundStyle(.white)
-                    .cornerRadius(PCTheme.Radius.md)
-                    .typography(.footnote)
-                    .fontWeight(.semibold)
-                }
-                .accessibleTapTarget()
-            }
-        }
-    }
-
-    private var screenTimeInsightCard: some View {
-        CardView {
-            VStack(alignment: .leading, spacing: PCTheme.Spacing.sm) {
-                HStack {
-                    HStack(spacing: PCTheme.Spacing.xs) {
-                        Image(systemName: "hourglass.bottomhalf.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Color.pcAccent)
-
-                        Text("Screen Time Active")
-                            .typography(.subheadline)
-                    }
-
-                    Spacer()
-
-                    Text("✓")
-                        .foregroundStyle(Color.pcAccent)
-                }
-
-                Text("App usage is shown below. Apps you use frequently but don't open often might be cleanable.")
-                    .typography(.footnote, color: .pcTextSecondary)
-            }
-        }
-    }
-
     // MARK: - App Breakdown
 
     private var appBreakdownSection: some View {
         VStack(alignment: .leading, spacing: PCTheme.Spacing.sm) {
-            Text(screenTimeEnabled ? "Apps by Space Used" : "Largest Apps")
+            Text("Largest Apps")
                 .typography(.headline)
                 .voiceOverHeading()
 
@@ -204,47 +122,21 @@ struct AppStorageWithScreenTimeView: View {
                         .fontWeight(.semibold)
                 }
 
-                if let usageMinutes = appUsageData[detail.detailType], usageMinutes > 0 {
-                    HStack(spacing: PCTheme.Spacing.xs) {
-                        Image(systemName: "hourglass.circle")
-                            .font(.caption2)
-                            .foregroundStyle(Color.pcTextSecondary)
-
-                        Text(formatUsageTime(usageMinutes))
-                            .typography(.caption, color: .pcTextSecondary)
-
-                        Spacer()
-
-                        if usageMinutes > 60 {
-                            Text("High usage")
-                                .typography(.caption)
-                                .padding(.horizontal, PCTheme.Spacing.xs)
-                                .padding(.vertical, 2)
-                                .background(Color.pcAccent.opacity(0.2))
-                                .foregroundStyle(Color.pcAccent)
-                                .cornerRadius(4)
-                        }
-                    }
-                }
-
-                // Recommendation
                 appRecommendation(for: detail)
             }
         }
     }
 
     private func appRecommendation(for detail: ScanDetail) -> some View {
-        let usageMinutes = appUsageData[detail.detailType] ?? 0
-        var recommendation = ""
-
-        if usageMinutes == 0 {
-            recommendation = "You haven't used this app recently. Safe to offload or delete."
-        } else if usageMinutes < 5 {
-            recommendation = "Minimal usage. Consider offloading if storage is tight."
+        let recommendation: String
+        if detail.sizeInBytes > 1_000_000_000 {
+            recommendation = "Large app. If you don't open it often, offloading frees space while keeping your data."
         } else if detail.sizeInBytes > 500_000_000 {
-            recommendation = "Large app. Check if you regularly use it; heavy data apps can be offloaded."
+            recommendation = "Sizable app. Worth checking if you still use it regularly."
+        } else if detail.sizeInBytes > 100_000_000 {
+            recommendation = "Moderate size. Keep if you use it; offload if not."
         } else {
-            recommendation = "You use this regularly. Keep or offload with cache cleaned regularly."
+            recommendation = "Small footprint."
         }
 
         return HStack(spacing: PCTheme.Spacing.xs) {
@@ -309,7 +201,6 @@ struct AppStorageWithScreenTimeView: View {
         [
             "Offloading an app removes it but keeps your data. Reinstalling is quick.",
             "Apps cache data that can grow over time. Clear in Settings → General → Storage.",
-            screenTimeEnabled ? "Apps you use frequently are generally worth keeping." : "Enable Screen Time to see which apps you actually use.",
             "Consider cloud storage (iCloud, Google Drive) for large media files."
         ]
     }
@@ -326,48 +217,8 @@ struct AppStorageWithScreenTimeView: View {
         }
     }
 
-    private func checkScreenTimeAvailability() {
-        // Try to load Screen Time data if available
-        // This is a simplified check; full implementation would use Family framework
-        isLoadingScreenTime = true
-        defer { isLoadingScreenTime = false }
-
-        screenTimeEnabled = canAccessScreenTime()
-        if screenTimeEnabled {
-            loadScreenTimeData()
-        }
-    }
-
-    private func canAccessScreenTime() -> Bool {
-        // Check if Screen Time restriction is available
-        // This requires FamilyControls entitlement and user permissions
-        return false // Placeholder; would need entitlements
-    }
-
-    private func loadScreenTimeData() {
-        // Placeholder implementation
-        // In production, would query Family framework for app usage
-        appUsageData = [:]
-    }
-
-    private func openScreenTimeSettings() {
-        if let url = URL(string: "App-Prefs:root=SCREEN_TIME") {
-            UIApplication.shared.open(url)
-        }
-    }
-
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-
-    private func formatUsageTime(_ minutes: Double) -> String {
-        if minutes < 60 {
-            return "\(Int(minutes))m"
-        } else {
-            let hours = Int(minutes / 60)
-            let mins = Int(minutes.truncatingRemainder(dividingBy: 60))
-            return "\(hours)h \(mins)m"
-        }
     }
 }
 
@@ -383,5 +234,5 @@ struct AppStorageWithScreenTimeView: View {
         percentage: 20.8
     )
 
-    AppStorageWithScreenTimeView(category: category)
+    AppStorageDetailView(category: category)
 }

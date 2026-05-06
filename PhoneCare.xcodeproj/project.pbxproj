@@ -120,7 +120,7 @@
 		FB68EEDBF1DAE5277B768CEA /* PhotoAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E92DF13EC64840FB8C8CE2 /* PhotoAnalyzer.swift */; };
 		FD9EC8A533649C055121D6F8 /* TechSavvyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F87EC69F4596AE32D7CE280A /* TechSavvyView.swift */; };
 		FDFF65119C4E119F053AE129 /* ContactAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC46C7F343A9D2AF3209A3A2 /* ContactAnalyzer.swift */; };
-		A1B2C3D4E5F60001A1B2C3D4 /* AppStorageWithScreenTimeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A1B2C3D4 /* AppStorageWithScreenTimeView.swift */; };
+		A1B2C3D4E5F60001A1B2C3D4 /* AppStorageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A1B2C3D4 /* AppStorageDetailView.swift */; };
 		FE6AEB79C4DBF4B02067CC04 /* CategoryDrillDownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8933222C536D38C013B7D9B /* CategoryDrillDownView.swift */; };
 /* End PBXBuildFile section */
 
@@ -256,7 +256,7 @@
 		F43849488C3D494A69C847A1 /* PhoneFeelingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneFeelingView.swift; sourceTree = "<group>"; };
 		F64986D7C2C9E02438A4A56A /* CleanupUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CleanupUndoManager.swift; sourceTree = "<group>"; };
 		F87EC69F4596AE32D7CE280A /* TechSavvyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TechSavvyView.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60002A1B2C3D4 /* AppStorageWithScreenTimeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStorageWithScreenTimeView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A1B2C3D4 /* AppStorageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStorageDetailView.swift; sourceTree = "<group>"; };
 		F8933222C536D38C013B7D9B /* CategoryDrillDownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDrillDownView.swift; sourceTree = "<group>"; };
 		FC867C8808B24CCF57B50BF0 /* PhoneCareApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCareApp.swift; sourceTree = "<group>"; };
 		FDCB69C212FCE29B496CB1BB /* SubscriptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionManager.swift; sourceTree = "<group>"; };
@@ -307,7 +307,7 @@
 		349194B7DB75269DB6D04BE4 /* Storage */ = {
 			isa = PBXGroup;
 			children = (
-				A1B2C3D4E5F60002A1B2C3D4 /* AppStorageWithScreenTimeView.swift */,
+				A1B2C3D4E5F60002A1B2C3D4 /* AppStorageDetailView.swift */,
 				F8933222C536D38C013B7D9B /* CategoryDrillDownView.swift */,
 				1BB40057A1B2C3D4E5F60708 /* MessageAttachmentGuideView.swift */,
 				1BB40056A1B2C3D4E5F60708 /* LargeFileFinderView.swift */,
@@ -780,7 +780,7 @@
 				BB86737F5E58F1CCC43343ED /* BatteryViewModel.swift in Sources */,
 				08FA614F13B8A84B5C2A7DEC /* ButtonStyles.swift in Sources */,
 				86F71929C4554EDB0C98CB45 /* CardView.swift in Sources */,
-				A1B2C3D4E5F60001A1B2C3D4 /* AppStorageWithScreenTimeView.swift in Sources */,
+				A1B2C3D4E5F60001A1B2C3D4 /* AppStorageDetailView.swift in Sources */,
 				FE6AEB79C4DBF4B02067CC04 /* CategoryDrillDownView.swift in Sources */,
 				9EB295854EECECF9E02853A6 /* CleanContactsFlow.swift in Sources */,
 				B3204490D20B9308D4B2A578 /* CleanPhotosFlow.swift in Sources */,

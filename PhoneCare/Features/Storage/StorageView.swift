@@ -139,7 +139,7 @@ struct StorageView: View {
                 ForEach(viewModel.categories) { category in
                     NavigationLink {
                         if category.id == "apps" {
-                            AppStorageWithScreenTimeView(category: category)
+                            AppStorageDetailView(category: category)
                         } else if category.id == "system" {
                             SystemDataExplainerView(
                                 category: category,
