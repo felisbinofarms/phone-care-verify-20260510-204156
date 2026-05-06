@@ -25,6 +25,38 @@ private final class FlakyProductLoader: StoreKitProductLoading, @unchecked Senda
     }
 }
 
+private final class MockPurchaseExecutor: PurchaseExecuting, @unchecked Sendable {
+    var nextOutcome: PurchaseFlowOutcome = .userCancelled
+    var shouldThrow: Error?
+
+    func executePurchase(_ product: Product) async throws -> (PurchaseFlowOutcome, Transaction?) {
+        if let err = shouldThrow { throw err }
+        // Tests pass `transaction: nil` since `Transaction` is non-constructible.
+        return (nextOutcome, nil)
+    }
+}
+
+private final class MockEntitlementProvider: EntitlementSnapshotting, @unchecked Sendable {
+    var snapshots: [EntitlementSnapshot] = []
+    func currentEntitlements() async -> [EntitlementSnapshot] { snapshots }
+}
+
+private func makeSnapshot(
+    productID: String = "com.phonecare.premium.annual",
+    isRevoked: Bool = false,
+    expirationDate: Date? = Date().addingTimeInterval(86_400 * 30),
+    isIntroductoryOffer: Bool = false,
+    gracePeriodExpirationDate: Date? = nil
+) -> EntitlementSnapshot {
+    EntitlementSnapshot(
+        productID: productID,
+        isRevoked: isRevoked,
+        expirationDate: expirationDate,
+        isIntroductoryOffer: isIntroductoryOffer,
+        gracePeriodExpirationDate: gracePeriodExpirationDate
+    )
+}
+
 @Suite("SubscriptionManager")
 @MainActor
 struct SubscriptionManagerTests {
@@ -179,5 +211,163 @@ struct SubscriptionManagerTests {
         await manager.loadProducts()
         #expect(manager.purchaseError == nil)
         #expect(manager.isLoading == false)
+    }
+
+    // MARK: - Purchase outcome handling — #104
+
+    @Test("applyPurchaseOutcome(.completed) calls checkEntitlement and updates premium state")
+    func applyPurchaseOutcome_completed_callsCheckEntitlement() async {
+        UserDefaults.standard.removeObject(forKey: "PhoneCare_isPremium")
+        let provider = MockEntitlementProvider()
+        provider.snapshots = [makeSnapshot()]
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: provider
+        )
+
+        _ = await manager.applyPurchaseOutcome(.completed, transaction: nil)
+        #expect(manager.isPremium == true)
+        #expect(manager.currentProductID == "com.phonecare.premium.annual")
+    }
+
+    @Test("applyPurchaseOutcome(.userCancelled) returns nil and leaves premium state unchanged")
+    func applyPurchaseOutcome_userCancelled_noStateChange() async {
+        UserDefaults.standard.removeObject(forKey: "PhoneCare_isPremium")
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let initial = manager.isPremium
+
+        let result = await manager.applyPurchaseOutcome(.userCancelled, transaction: nil)
+        #expect(result == nil)
+        #expect(manager.isPremium == initial)
+    }
+
+    @Test("applyPurchaseOutcome(.pending) returns nil")
+    func applyPurchaseOutcome_pending_returnsNil() async {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let result = await manager.applyPurchaseOutcome(.pending, transaction: nil)
+        #expect(result == nil)
+    }
+
+    @Test("applyPurchaseOutcome(.unknown) returns nil")
+    func applyPurchaseOutcome_unknown_returnsNil() async {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let result = await manager.applyPurchaseOutcome(.unknown, transaction: nil)
+        #expect(result == nil)
+    }
+
+    // MARK: - Entitlement aggregation — #104
+
+    @Test("aggregateEntitlements with empty list returns inactive aggregate")
+    func aggregateEntitlements_emptyList_returnsInactive() {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let aggregated = manager.aggregateEntitlements([])
+        #expect(aggregated.isActive == false)
+        #expect(aggregated.productID == nil)
+        #expect(aggregated.expirationDate == nil)
+        #expect(aggregated.isTrial == false)
+        #expect(aggregated.isGracePeriod == false)
+    }
+
+    @Test("aggregateEntitlements with one active snapshot returns active state")
+    func aggregateEntitlements_oneActive_returnsActive() {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let exp = Date(timeIntervalSince1970: 2_000_000_000)
+        let snap = makeSnapshot(productID: "com.phonecare.premium.monthly", expirationDate: exp)
+        let aggregated = manager.aggregateEntitlements([snap])
+
+        #expect(aggregated.isActive == true)
+        #expect(aggregated.productID == "com.phonecare.premium.monthly")
+        #expect(aggregated.expirationDate == exp)
+    }
+
+    @Test("aggregateEntitlements skips revoked snapshots")
+    func aggregateEntitlements_revoked_isInactive() {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let aggregated = manager.aggregateEntitlements([makeSnapshot(isRevoked: true)])
+        #expect(aggregated.isActive == false)
+        #expect(aggregated.productID == nil)
+    }
+
+    @Test("aggregateEntitlements sets isTrial when introductory offer is present")
+    func aggregateEntitlements_introductory_setsTrial() {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let snap = makeSnapshot(isIntroductoryOffer: true)
+        let aggregated = manager.aggregateEntitlements([snap])
+        #expect(aggregated.isActive == true)
+        #expect(aggregated.isTrial == true)
+    }
+
+    @Test("aggregateEntitlements filters out unknown product IDs")
+    func aggregateEntitlements_unknownProductID_isFiltered() {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let snap = makeSnapshot(productID: "com.competitor.app.premium")
+        let aggregated = manager.aggregateEntitlements([snap])
+        #expect(aggregated.isActive == false)
+    }
+
+    @Test("aggregateEntitlements sets isGracePeriod when gracePeriodExpirationDate is present")
+    func aggregateEntitlements_gracePeriod_isSet() {
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: MockEntitlementProvider()
+        )
+        let snap = makeSnapshot(gracePeriodExpirationDate: Date().addingTimeInterval(3600))
+        let aggregated = manager.aggregateEntitlements([snap])
+        #expect(aggregated.isActive == true)
+        #expect(aggregated.isGracePeriod == true)
+    }
+
+    // MARK: - checkEntitlement integration — #104
+
+    @Test("checkEntitlement with mocked provider returning active updates manager state")
+    func checkEntitlement_integration_withMockedProvider() async {
+        UserDefaults.standard.removeObject(forKey: "PhoneCare_isPremium")
+        let provider = MockEntitlementProvider()
+        let exp = Date(timeIntervalSince1970: 2_100_000_000)
+        provider.snapshots = [makeSnapshot(productID: "com.phonecare.premium.weekly", expirationDate: exp)]
+        let manager = SubscriptionManager(
+            productLoader: MockProductLoader(),
+            purchaseExecutor: MockPurchaseExecutor(),
+            entitlementProvider: provider
+        )
+
+        await manager.checkEntitlement()
+        #expect(manager.isPremium == true)
+        #expect(manager.currentProductID == "com.phonecare.premium.weekly")
+        #expect(manager.expirationDate == exp)
     }
 }

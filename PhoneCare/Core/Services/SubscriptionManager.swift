@@ -2,6 +2,38 @@ import Foundation
 import StoreKit
 import OSLog
 
+// MARK: - Test Seam DTOs
+
+/// Sendable summary of a single StoreKit entitlement, decoupled from
+/// `Transaction` (which is non-constructible in tests).
+struct EntitlementSnapshot: Sendable {
+    let productID: String
+    let isRevoked: Bool
+    let expirationDate: Date?
+    let isIntroductoryOffer: Bool
+    let gracePeriodExpirationDate: Date?
+}
+
+/// Sendable summary of a purchase result. Decouples `applyPurchaseOutcome`
+/// from `Product.PurchaseResult` (non-constructible in tests).
+enum PurchaseFlowOutcome: Sendable {
+    case completed
+    case userCancelled
+    case pending
+    case unknown
+}
+
+/// Aggregated entitlement state, computed from a list of `EntitlementSnapshot`s.
+struct AggregatedEntitlement: Sendable {
+    let isActive: Bool
+    let isTrial: Bool
+    let isGracePeriod: Bool
+    let productID: String?
+    let expirationDate: Date?
+}
+
+// MARK: - Test Seam Protocols
+
 protocol StoreKitProductLoading: Sendable {
     func loadProducts(ids: Set<String>) async throws -> [Product]
 }
@@ -9,6 +41,68 @@ protocol StoreKitProductLoading: Sendable {
 struct DefaultStoreKitProductLoader: StoreKitProductLoading {
     func loadProducts(ids: Set<String>) async throws -> [Product] {
         try await Product.products(for: ids)
+    }
+}
+
+protocol PurchaseExecuting: Sendable {
+    /// Executes a StoreKit purchase and translates the result into a
+    /// `PurchaseFlowOutcome` plus (in production) the underlying Transaction
+    /// so the caller can `finish()` it. Throws on unverified results.
+    func executePurchase(_ product: Product) async throws -> (PurchaseFlowOutcome, Transaction?)
+}
+
+struct DefaultPurchaseExecutor: PurchaseExecuting {
+    func executePurchase(_ product: Product) async throws -> (PurchaseFlowOutcome, Transaction?) {
+        let result = try await product.purchase()
+        switch result {
+        case .success(let verification):
+            switch verification {
+            case .verified(let transaction):
+                return (.completed, transaction)
+            case .unverified(_, let error):
+                throw error
+            }
+        case .userCancelled:
+            return (.userCancelled, nil)
+        case .pending:
+            return (.pending, nil)
+        @unknown default:
+            return (.unknown, nil)
+        }
+    }
+}
+
+protocol EntitlementSnapshotting: Sendable {
+    /// Iterates all current entitlements, projecting each verified one into
+    /// a Sendable snapshot. Tests return canned arrays; production uses real
+    /// `Transaction.currentEntitlements`.
+    func currentEntitlements() async -> [EntitlementSnapshot]
+}
+
+struct DefaultEntitlementProvider: EntitlementSnapshotting {
+    func currentEntitlements() async -> [EntitlementSnapshot] {
+        var snapshots: [EntitlementSnapshot] = []
+        for await result in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = result else { continue }
+
+            // Look up grace-period expiration via renewal info, if available.
+            var gracePeriodExpirationDate: Date? = nil
+            if let products = try? await Product.products(for: [transaction.productID]),
+               let subscription = products.first?.subscription,
+               let status = try? await subscription.status.first,
+               case .verified(let info) = status.renewalInfo {
+                gracePeriodExpirationDate = info.gracePeriodExpirationDate
+            }
+
+            snapshots.append(EntitlementSnapshot(
+                productID: transaction.productID,
+                isRevoked: transaction.revocationDate != nil,
+                expirationDate: transaction.expirationDate,
+                isIntroductoryOffer: transaction.offerType == .introductory,
+                gracePeriodExpirationDate: gracePeriodExpirationDate
+            ))
+        }
+        return snapshots
     }
 }
 
@@ -43,6 +137,8 @@ final class SubscriptionManager {
     private var transactionListener: Task<Void, Never>?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "PhoneCare", category: "SubscriptionManager")
     private let productLoader: StoreKitProductLoading
+    private let purchaseExecutor: PurchaseExecuting
+    private let entitlementProvider: EntitlementSnapshotting
 
     private static let isPremiumKey = "PhoneCare_isPremium"
     #if DEBUG
@@ -70,8 +166,14 @@ final class SubscriptionManager {
 
     // MARK: - Init
 
-    init(productLoader: StoreKitProductLoading = DefaultStoreKitProductLoader()) {
+    init(
+        productLoader: StoreKitProductLoading = DefaultStoreKitProductLoader(),
+        purchaseExecutor: PurchaseExecuting = DefaultPurchaseExecutor(),
+        entitlementProvider: EntitlementSnapshotting = DefaultEntitlementProvider()
+    ) {
         self.productLoader = productLoader
+        self.purchaseExecutor = purchaseExecutor
+        self.entitlementProvider = entitlementProvider
         // Restore cached premium state for instant UI.
         let cachedPremium = UserDefaults.standard.bool(forKey: Self.isPremiumKey)
         #if DEBUG
@@ -96,6 +198,7 @@ final class SubscriptionManager {
 
     func loadProducts() async {
         isLoading = true
+        purchaseError = nil
         defer { isLoading = false }
 
         do {
@@ -117,25 +220,31 @@ final class SubscriptionManager {
         purchaseError = nil
         defer { isLoading = false }
 
-        let result = try await product.purchase()
+        let (outcome, transaction) = try await purchaseExecutor.executePurchase(product)
+        return await applyPurchaseOutcome(outcome, transaction: transaction)
+    }
 
-        switch result {
-        case .success(let verification):
-            let transaction = try checkVerified(verification)
-            await transaction.finish()
+    /// Internal — handles the post-IO state transition. Tests synthesize a
+    /// `PurchaseFlowOutcome` and pass `transaction: nil` to bypass `Transaction`'s
+    /// non-constructibility while still exercising the state-update logic.
+    @discardableResult
+    func applyPurchaseOutcome(
+        _ outcome: PurchaseFlowOutcome,
+        transaction: Transaction? = nil
+    ) async -> Transaction? {
+        switch outcome {
+        case .completed:
+            await transaction?.finish()
             await checkEntitlement()
-            logger.info("Purchase successful: \(product.id)")
+            logger.info("Purchase completed.")
             return transaction
-
         case .userCancelled:
             logger.info("Purchase cancelled by user.")
             return nil
-
         case .pending:
             logger.info("Purchase pending approval.")
             return nil
-
-        @unknown default:
+        case .unknown:
             logger.warning("Unknown purchase result.")
             return nil
         }
@@ -160,43 +269,45 @@ final class SubscriptionManager {
     // MARK: - Entitlement Check
 
     func checkEntitlement() async {
+        let snapshots = await entitlementProvider.currentEntitlements()
+        let aggregated = aggregateEntitlements(snapshots)
+        applyEntitlement(
+            isActive: aggregated.isActive,
+            isTrial: aggregated.isTrial,
+            isGracePeriod: aggregated.isGracePeriod,
+            productID: aggregated.productID,
+            expiration: aggregated.expirationDate
+        )
+    }
+
+    /// Internal — pure aggregation of entitlement snapshots. Tests call this
+    /// directly with synthetic snapshots.
+    func aggregateEntitlements(_ snapshots: [EntitlementSnapshot]) -> AggregatedEntitlement {
         var foundActive = false
         var trialActive = false
         var gracePeriod = false
         var activeProductID: String?
         var activeExpiration: Date?
 
-        for await result in Transaction.currentEntitlements {
-            guard let transaction = try? checkVerified(result) else { continue }
-
+        for snapshot in snapshots {
             // Only consider our product IDs.
-            guard ProductID(rawValue: transaction.productID) != nil else { continue }
+            guard ProductID(rawValue: snapshot.productID) != nil else { continue }
+            // Skip revoked entitlements.
+            guard !snapshot.isRevoked else { continue }
 
-            if transaction.revocationDate == nil {
-                foundActive = true
-                activeProductID = transaction.productID
-
-                if let offerType = transaction.offerType, offerType == .introductory {
-                    trialActive = true
-                }
-
-                activeExpiration = transaction.expirationDate
-
-                // Check grace period via renewal info.
-                if let renewalInfo = await renewalInfo(for: transaction.productID) {
-                    if renewalInfo.gracePeriodExpirationDate != nil {
-                        gracePeriod = true
-                    }
-                }
-            }
+            foundActive = true
+            activeProductID = snapshot.productID
+            activeExpiration = snapshot.expirationDate
+            if snapshot.isIntroductoryOffer { trialActive = true }
+            if snapshot.gracePeriodExpirationDate != nil { gracePeriod = true }
         }
 
-        applyEntitlement(
+        return AggregatedEntitlement(
             isActive: foundActive,
             isTrial: trialActive,
             isGracePeriod: gracePeriod,
             productID: activeProductID,
-            expiration: activeExpiration
+            expirationDate: activeExpiration
         )
     }
 
@@ -240,18 +351,6 @@ final class SubscriptionManager {
         case .verified(let value):
             return value
         }
-    }
-
-    private func renewalInfo(for productID: String) async -> Product.SubscriptionInfo.RenewalInfo? {
-        guard let product = products.first(where: { $0.id == productID }),
-              let subscription = product.subscription else {
-            return nil
-        }
-        guard let status = try? await subscription.status.first,
-              case .verified(let info) = status.renewalInfo else {
-            return nil
-        }
-        return info
     }
 
     // MARK: - Formatting Helpers
