@@ -61,10 +61,10 @@ struct HealthScoreRingView: View {
             }
         }
         .onChange(of: score) { _, newScore in
-            let newTarget = Double(max(0, min(100, newScore))) / 100.0
-            withAnimation(reduceMotion ? .none : .easeOut(duration: 0.6)) {
-                animatedProgress = newTarget
-            }
+            // The outer .animation(value: score) modifier above drives the
+            // transaction; assigning here lets the trim animate in the SAME
+            // transaction as the ring color, eliminating the color-flash desync.
+            animatedProgress = Double(max(0, min(100, newScore))) / 100.0
         }
     }
 
