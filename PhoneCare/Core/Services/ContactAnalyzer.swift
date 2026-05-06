@@ -2,6 +2,27 @@ import Foundation
 import Contacts
 import OSLog
 
+// MARK: - Contact Store Test Seam
+
+/// Minimal protocol over CNContactStore. Production code uses the real store
+/// via the default init; tests inject a mock to exercise denial, missing-contact,
+/// and successful-merge paths deterministically.
+protocol ContactStoreProviding: AnyObject {
+    func unifiedContact(
+        withIdentifier identifier: String,
+        keysToFetch keys: [CNKeyDescriptor]
+    ) throws -> CNContact
+
+    func execute(_ saveRequest: CNSaveRequest) throws
+
+    func enumerateContacts(
+        with fetchRequest: CNContactFetchRequest,
+        usingBlock block: (CNContact, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) throws
+}
+
+extension CNContactStore: ContactStoreProviding {}
+
 // MARK: - Contact Duplicate Group
 
 struct ContactDuplicateGroup: Sendable, Identifiable {
@@ -51,6 +72,13 @@ final class ContactAnalyzer {
     // MARK: - Private
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "PhoneCare", category: "ContactAnalyzer")
+    private let contactStore: ContactStoreProviding
+
+    // MARK: - Init
+
+    init(contactStore: ContactStoreProviding = CNContactStore()) {
+        self.contactStore = contactStore
+    }
 
     // MARK: - Analyze
 
@@ -93,7 +121,7 @@ final class ContactAnalyzer {
         removeIdentifiers: [String],
         dataManager: DataManager
     ) async throws {
-        let store = CNContactStore()
+        let store = contactStore
 
         let keysToFetch: [CNKeyDescriptor] = [
             CNContactGivenNameKey as CNKeyDescriptor,
@@ -220,7 +248,7 @@ final class ContactAnalyzer {
 
         guard !backups.isEmpty else { return }
 
-        let store = CNContactStore()
+        let store = contactStore
         let saveRequest = CNSaveRequest()
 
         for backup in backups {

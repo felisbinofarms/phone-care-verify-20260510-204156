@@ -1,6 +1,66 @@
 import Testing
 import Foundation
+import Contacts
 @testable import PhoneCare
+
+// MARK: - Test seam mock
+
+private final class MockContactStore: ContactStoreProviding {
+    var contactsByIdentifier: [String: CNContact] = [:]
+    var executeShouldThrow: Error?
+    private(set) var executeCallCount = 0
+
+    func unifiedContact(
+        withIdentifier identifier: String,
+        keysToFetch keys: [CNKeyDescriptor]
+    ) throws -> CNContact {
+        guard let contact = contactsByIdentifier[identifier] else {
+            throw CNError(.recordDoesNotExist)
+        }
+        return contact
+    }
+
+    func execute(_ saveRequest: CNSaveRequest) throws {
+        if let err = executeShouldThrow { throw err }
+        executeCallCount += 1
+    }
+
+    func enumerateContacts(
+        with fetchRequest: CNContactFetchRequest,
+        usingBlock block: (CNContact, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) throws {
+        // Unused in #103 scope; #102's PhotoAnalyzer-style refactor will populate this.
+    }
+}
+
+private func makeContact(
+    given: String = "Test",
+    family: String = "Person",
+    phones: [String] = [],
+    emails: [String] = []
+) -> CNMutableContact {
+    let c = CNMutableContact()
+    c.givenName = given
+    c.familyName = family
+    c.phoneNumbers = phones.map {
+        CNLabeledValue(label: CNLabelHome, value: CNPhoneNumber(stringValue: $0))
+    }
+    c.emailAddresses = emails.map {
+        CNLabeledValue(label: CNLabelHome, value: $0 as NSString)
+    }
+    return c
+}
+
+private let sampleVCard: Data = {
+    let s = """
+    BEGIN:VCARD
+    VERSION:3.0
+    FN:Restored Person
+    N:Person;Restored;;;
+    END:VCARD
+    """
+    return s.data(using: .utf8)!
+}()
 
 @Suite("ContactAnalyzer")
 @MainActor
@@ -210,5 +270,142 @@ struct ContactAnalyzerTests {
         let withCC = ContactAnalyzer.normalizePhoneNumber("1 (555) 867-5309")
         let raw    = ContactAnalyzer.normalizePhoneNumber("5558675309")
         #expect(withCC == raw)
+    }
+
+    // MARK: - mergeContacts (mock store) — #103
+
+    @Test("mergeContacts throws contactNotFound when primary identifier is unknown to the store")
+    func mergeContacts_primaryNotFound_throwsContactNotFound() async {
+        let mock = MockContactStore()
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        await #expect(throws: ContactMergeError.self) {
+            try await analyzer.mergeContacts(
+                keepIdentifier: "missing-primary",
+                removeIdentifiers: ["dup-1"],
+                dataManager: dataManager
+            )
+        }
+    }
+
+    @Test("mergeContacts saves one ContactBackup per duplicate before deleting it")
+    func mergeContacts_savesBackupBeforeDelete() async throws {
+        let mock = MockContactStore()
+        mock.contactsByIdentifier["primary"] = makeContact(given: "Alice", phones: ["5551234567"])
+        mock.contactsByIdentifier["dup-1"]   = makeContact(given: "Alice", phones: ["5559999999"])
+
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        try await analyzer.mergeContacts(
+            keepIdentifier: "primary",
+            removeIdentifiers: ["dup-1"],
+            dataManager: dataManager
+        )
+
+        let backups = try dataManager.fetch(ContactBackup.self)
+        #expect(backups.count == 1)
+        #expect(backups.first?.mergedContactID == "primary")
+    }
+
+    @Test("mergeContacts saves one ContactBackup per duplicate when there are multiple")
+    func mergeContacts_savesBackupPerDuplicate() async throws {
+        let mock = MockContactStore()
+        mock.contactsByIdentifier["primary"] = makeContact(given: "Bob")
+        mock.contactsByIdentifier["dup-a"]   = makeContact(given: "Bob")
+        mock.contactsByIdentifier["dup-b"]   = makeContact(given: "Bob")
+        mock.contactsByIdentifier["dup-c"]   = makeContact(given: "Bob")
+
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        try await analyzer.mergeContacts(
+            keepIdentifier: "primary",
+            removeIdentifiers: ["dup-a", "dup-b", "dup-c"],
+            dataManager: dataManager
+        )
+
+        let backups = try dataManager.fetch(ContactBackup.self)
+        #expect(backups.count == 3)
+    }
+
+    @Test("mergeContacts rethrows when CNContactStore.execute throws")
+    func mergeContacts_executeThrows_rethrows() async {
+        let mock = MockContactStore()
+        mock.contactsByIdentifier["primary"] = makeContact(given: "Carol")
+        mock.contactsByIdentifier["dup-1"]   = makeContact(given: "Carol")
+        mock.executeShouldThrow = NSError(domain: CNErrorDomain, code: 400, userInfo: nil)
+
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        await #expect(throws: (any Error).self) {
+            try await analyzer.mergeContacts(
+                keepIdentifier: "primary",
+                removeIdentifiers: ["dup-1"],
+                dataManager: dataManager
+            )
+        }
+    }
+
+    @Test("mergeContacts calls store.execute exactly once on the success path")
+    func mergeContacts_executeCalled_onSuccess() async throws {
+        let mock = MockContactStore()
+        mock.contactsByIdentifier["primary"] = makeContact(given: "Dave", phones: ["5550001111"])
+        mock.contactsByIdentifier["dup-1"]   = makeContact(given: "Dave", phones: ["5552223333"])
+
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        try await analyzer.mergeContacts(
+            keepIdentifier: "primary",
+            removeIdentifiers: ["dup-1"],
+            dataManager: dataManager
+        )
+
+        #expect(mock.executeCallCount == 1)
+    }
+
+    // MARK: - restoreMergedContacts (mock store) — #103
+
+    @Test("restoreMergedContacts marks matching backup as restored and calls store.execute")
+    func restoreMergedContacts_marksBackupRestored() async throws {
+        let mock = MockContactStore()
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        let mergeDate = Date()
+        let backup = ContactBackup(
+            originalContactData: sampleVCard,
+            mergedContactID: "primary-restore",
+            mergeDate: mergeDate
+        )
+        try dataManager.save(backup)
+
+        try await analyzer.restoreMergedContacts(
+            mergedInto: "primary-restore",
+            mergedAfter: mergeDate.addingTimeInterval(-1),
+            dataManager: dataManager
+        )
+
+        #expect(mock.executeCallCount == 1)
+        let restored = try dataManager.fetch(ContactBackup.self)
+        #expect(restored.first?.isRestored == true)
+    }
+
+    @Test("restoreMergedContacts is a no-op when no matching backup exists")
+    func restoreMergedContacts_noMatchingBackup_isNoOp() async throws {
+        let mock = MockContactStore()
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        try await analyzer.restoreMergedContacts(
+            mergedInto: "primary-with-no-backup",
+            mergedAfter: Date(),
+            dataManager: dataManager
+        )
+
+        #expect(mock.executeCallCount == 0)
     }
 }
