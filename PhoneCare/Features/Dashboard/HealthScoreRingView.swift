@@ -71,7 +71,7 @@ struct HealthScoreRingView: View {
     private var scoreAccessibilityDescription: String {
         if score >= 76 {
             return "Excellent. Your phone is in great shape."
-        } else if score >= 51 {
+        } else if score >= HealthScoreCalculator.goodThreshold {
             return "Good. A few things could be tidied up."
         } else {
             return "Could be better. Some areas need attention."

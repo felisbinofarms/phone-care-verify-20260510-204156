@@ -78,7 +78,7 @@ struct DashboardView: View {
         let score = viewModel.healthScore
         if score >= 76 {
             return "Your phone is in great shape!"
-        } else if score >= 51 {
+        } else if score >= HealthScoreCalculator.goodThreshold {
             return "Your phone is doing well. A few things could help."
         } else {
             return "There are some things you can do to help your phone."
