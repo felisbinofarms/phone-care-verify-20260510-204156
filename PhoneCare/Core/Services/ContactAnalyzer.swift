@@ -183,6 +183,24 @@ final class ContactAnalyzer {
         saveRequest.update(mutablePrimary)
         try store.execute(saveRequest)
 
+        // Post-execute verification — guards against silent CNContactStore failures
+        // where execute() returned without throwing but the store wasn't actually updated.
+        let verifyKeys: [CNKeyDescriptor] = [CNContactGivenNameKey as CNKeyDescriptor]
+
+        guard (try? store.unifiedContact(
+            withIdentifier: keepIdentifier,
+            keysToFetch: verifyKeys
+        )) != nil else {
+            throw ContactMergeError.mergeFailed("Primary contact could not be verified after merge.")
+        }
+
+        let stillPresent = removeIdentifiers.filter { id in
+            (try? store.unifiedContact(withIdentifier: id, keysToFetch: verifyKeys)) != nil
+        }
+        if !stillPresent.isEmpty {
+            throw ContactMergeError.mergeFailed("\(stillPresent.count) duplicate contact(s) were not removed.")
+        }
+
         logger.info("Merged \(removeIdentifiers.count) contacts into \(keepIdentifier)")
     }
 
