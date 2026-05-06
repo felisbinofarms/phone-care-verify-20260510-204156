@@ -71,11 +71,14 @@ struct PhotosView: View {
                         }
                     },
                     onDismiss: {
-                        viewModel.dismissDeletedToast()
+                        withAnimation { viewModel.dismissDeletedToast() }
                         if sharePromptManager.shouldShowPrompt(dataManager: dataManager) {
                             sharePromptManager.recordPromptShown(dataManager: dataManager)
-                            Task {
+                            Task { @MainActor in
                                 try? await Task.sleep(for: .seconds(3))
+                                // Race guard: skip the share prompt if a fresh undo toast
+                                // appeared during the delay (e.g. user started another batch delete).
+                                guard !viewModel.showUndoToast else { return }
                                 withAnimation { showSharePrompt = true }
                             }
                         }
