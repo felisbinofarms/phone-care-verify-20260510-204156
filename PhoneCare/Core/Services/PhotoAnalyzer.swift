@@ -317,15 +317,28 @@ final class PhotoAnalyzer {
             )
         }
 
-        // ── 3. Blurry detection (low pixel count) ───────────────────────────────
+        // ── 3. Blurry detection (Laplacian variance on small candidates) ────────
+        // Pre-filter: only inspect non-screenshot images with low pixel count;
+        // full-resolution photos are unlikely to be blurry-and-worth-flagging.
         let blurryThresholdPixels = 500 * 500
-        let blurryPhotos = assetInfos.filter {
+        let blurryCandidates = assetInfos.filter {
             $0.mediaType == .image
             && !$0.mediaSubtypes.contains(.photoScreenshot)
-            && ($0.pixelWidth * $0.pixelHeight) < blurryThresholdPixels
             && $0.pixelWidth > 0
+            && ($0.pixelWidth * $0.pixelHeight) < blurryThresholdPixels
         }
-        let blurryIDs = blurryPhotos.map(\.identifier)
+
+        // Verify each candidate's actual sharpness. Conservative on load
+        // failure — don't flag photos we couldn't measure.
+        let blurryVarianceThreshold: Double = 100.0
+        var blurryIDs: [String] = []
+        blurryIDs.reserveCapacity(blurryCandidates.count)
+        for candidate in blurryCandidates {
+            if let variance = await computeLaplacianVariance(identifier: candidate.identifier),
+               variance < blurryVarianceThreshold {
+                blurryIDs.append(candidate.identifier)
+            }
+        }
 
         // ── 4. Duplicate / similar photo grouping ───────────────────────────────
         // Work on non-screenshot, non-blurry photos only
@@ -577,5 +590,89 @@ final class PhotoAnalyzer {
     /// Counts the number of differing bits between two hashes (Hamming distance).
     private static func hammingDistance(_ a: UInt64, _ b: UInt64) -> Int {
         (a ^ b).nonzeroBitCount
+    }
+
+    // MARK: - Blur Detection Helpers
+
+    /// Loads a 64×64 grayscale thumbnail of the asset and returns its Laplacian
+    /// variance — a standard sharpness measure. Higher variance = sharper.
+    /// Returns nil on load failure or timeout.
+    private static func computeLaplacianVariance(identifier: String) async -> Double? {
+        guard let asset = PHAsset.fetchAssets(
+            withLocalIdentifiers: [identifier], options: nil
+        ).firstObject else { return nil }
+
+        let image: UIImage? = await withThrowingTaskGroup(of: UIImage?.self) { group in
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    let options = PHImageRequestOptions()
+                    options.deliveryMode = .fastFormat
+                    options.isNetworkAccessAllowed = false
+                    options.resizeMode = .fast
+
+                    PHImageManager.default().requestImage(
+                        for: asset,
+                        targetSize: CGSize(width: 64, height: 64),
+                        contentMode: .aspectFill,
+                        options: options
+                    ) { image, _ in
+                        continuation.resume(returning: image)
+                    }
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5))
+                return nil
+            }
+            do {
+                if let result = try await group.next() {
+                    group.cancelAll()
+                    return result
+                }
+            } catch {}
+            group.cancelAll()
+            return nil
+        }
+
+        return image.flatMap(Self.laplacianVariance(from:))
+    }
+
+    /// Computes the variance of a 3×3 Laplacian filter applied to a 64×64
+    /// grayscale rendering of the image. Low variance = lacks high-frequency
+    /// edge content, indicating a blurry image.
+    private static func laplacianVariance(from image: UIImage) -> Double? {
+        guard let cgImage = image.cgImage else { return nil }
+        let side = 64
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        var pixelData = [UInt8](repeating: 0, count: side * side)
+        guard let context = CGContext(
+            data: &pixelData,
+            width: side, height: side,
+            bitsPerComponent: 8, bytesPerRow: side,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+
+        // 3×3 Laplacian kernel: [0, -1, 0; -1, 4, -1; 0, -1, 0].
+        // Skip the 1-pixel border (no neighbors) so variance reflects interior content.
+        var laplacian: [Double] = []
+        laplacian.reserveCapacity((side - 2) * (side - 2))
+        for y in 1..<(side - 1) {
+            for x in 1..<(side - 1) {
+                let idx = y * side + x
+                let center = Double(pixelData[idx])
+                let top = Double(pixelData[idx - side])
+                let bottom = Double(pixelData[idx + side])
+                let left = Double(pixelData[idx - 1])
+                let right = Double(pixelData[idx + 1])
+                laplacian.append(4 * center - top - bottom - left - right)
+            }
+        }
+
+        guard !laplacian.isEmpty else { return nil }
+        let mean = laplacian.reduce(0.0, +) / Double(laplacian.count)
+        let variance = laplacian.reduce(0.0) { $0 + ($1 - mean) * ($1 - mean) } / Double(laplacian.count)
+        return variance
     }
 }
