@@ -7,6 +7,15 @@ private actor CallTracker {
     func markCalled() { wasCalled = true }
 }
 
+private actor AttemptCounter {
+    var value = 0
+    @discardableResult
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+}
+
 @Suite("CleanupUndoManager")
 @MainActor
 struct CleanupUndoManagerTests {
@@ -278,5 +287,58 @@ struct CleanupUndoManagerTests {
     func undoActionForUnknownID() {
         let manager = CleanupUndoManager()
         #expect(manager.undoAction(for: UUID()) == nil)
+    }
+
+    // MARK: - Error paths (#118)
+
+    @Test("undo rethrows when handler throws and leaves action available")
+    func undoHandlerThrows_rethrowsAndLeavesActionInList() async {
+        let manager = CleanupUndoManager()
+        let id = UUID()
+        enum HandlerError: Error { case boom }
+
+        manager.registerAction(
+            id: id, actionType: .photoDelete, itemCount: 1, duration: 60
+        ) {
+            throw HandlerError.boom
+        }
+
+        do {
+            _ = try await manager.undo(id: id)
+            Issue.record("Expected undo to rethrow handler error")
+        } catch {
+            // Expected — handler threw, manager rethrew.
+        }
+
+        // The action should still be available so the user can retry.
+        #expect(manager.isUndoAvailable(id: id))
+        #expect(manager.activeUndoActions.contains(where: { $0.id == id }))
+    }
+
+    @Test("undo can be retried after a previous handler threw")
+    func undoHandlerThrows_canBeRetried() async throws {
+        let manager = CleanupUndoManager()
+        let id = UUID()
+        let counter = AttemptCounter()
+        enum HandlerError: Error { case transient }
+
+        manager.registerAction(
+            id: id, actionType: .photoDelete, itemCount: 1, duration: 60
+        ) {
+            let n = await counter.increment()
+            if n == 1 { throw HandlerError.transient }
+        }
+
+        // First attempt: throws.
+        do {
+            _ = try await manager.undo(id: id)
+            Issue.record("Expected first undo to throw")
+        } catch {}
+
+        // Second attempt: succeeds, action is cleaned up.
+        let success = try await manager.undo(id: id)
+        #expect(success == true)
+        #expect(manager.isUndoAvailable(id: id) == false)
+        #expect(await counter.value == 2)
     }
 }

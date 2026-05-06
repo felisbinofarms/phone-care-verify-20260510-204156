@@ -7,6 +7,24 @@ private struct MockProductLoader: StoreKitProductLoading {
     func loadProducts(ids: Set<String>) async throws -> [Product] { [] }
 }
 
+private struct ThrowingProductLoader: StoreKitProductLoading {
+    enum LoaderError: Error { case simulated }
+    func loadProducts(ids: Set<String>) async throws -> [Product] {
+        throw LoaderError.simulated
+    }
+}
+
+private final class FlakyProductLoader: StoreKitProductLoading, @unchecked Sendable {
+    var shouldThrow = true
+
+    func loadProducts(ids: Set<String>) async throws -> [Product] {
+        if shouldThrow {
+            throw ThrowingProductLoader.LoaderError.simulated
+        }
+        return []
+    }
+}
+
 @Suite("SubscriptionManager")
 @MainActor
 struct SubscriptionManagerTests {
@@ -135,6 +153,31 @@ struct SubscriptionManagerTests {
         let manager = SubscriptionManager(productLoader: MockProductLoader())
         #expect(manager.isLoading == false)
         await manager.loadProducts()
+        #expect(manager.isLoading == false)
+    }
+
+    // MARK: - Error paths (#118)
+
+    @Test("loadProducts surfaces purchaseError when the loader throws")
+    func loadProducts_throwingLoader_setsPurchaseError() async {
+        let manager = SubscriptionManager(productLoader: ThrowingProductLoader())
+        await manager.loadProducts()
+        #expect(manager.products.isEmpty)
+        #expect(manager.purchaseError != nil)
+        #expect(manager.isLoading == false)
+    }
+
+    @Test("loadProducts recovers if a later call succeeds after an earlier failure")
+    func loadProducts_recoversAfterFailure() async {
+        let loader = FlakyProductLoader()
+        let manager = SubscriptionManager(productLoader: loader)
+
+        await manager.loadProducts()
+        #expect(manager.purchaseError != nil)
+
+        loader.shouldThrow = false
+        await manager.loadProducts()
+        #expect(manager.purchaseError == nil)
         #expect(manager.isLoading == false)
     }
 }
