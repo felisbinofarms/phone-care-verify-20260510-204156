@@ -7,7 +7,9 @@ struct MergeComparisonView: View {
 
     @State private var fields: [ContactField]
     @Environment(\.dismiss) private var dismiss
+    @Environment(SubscriptionManager.self) private var subscriptionManager
         @State private var showMergeConfirmation = false
+        @State private var showPaywall = false
 
     init(group: DuplicateContactGroup, onMerge: (() -> Void)? = nil, onCancel: (() -> Void)? = nil) {
         self.group = group
@@ -28,7 +30,11 @@ struct MergeComparisonView: View {
 
                     // Merge button
                     Button("Merge Contacts") {
+                        if subscriptionManager.isPremium {
                             showMergeConfirmation = true
+                        } else {
+                            showPaywall = true
+                        }
                     }
                     .primaryCTAStyle()
                     .padding(.top, PCTheme.Spacing.md)
@@ -62,6 +68,9 @@ struct MergeComparisonView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("This will combine \(group.contactIDs.count) entries into a single contact. You can undo this for 30 seconds after merging.")
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallBottomSheet()
         }
     }
 

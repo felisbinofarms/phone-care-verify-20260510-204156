@@ -158,11 +158,7 @@ struct ContactsView: View {
 
             ForEach(viewModel.duplicateGroups) { group in
                 Button {
-                    if subscriptionManager.isPremium {
-                        selectedGroup = group
-                    } else {
-                        showPaywall = true
-                    }
+                    selectedGroup = group
                 } label: {
                     groupRow(group)
                 }
@@ -194,20 +190,13 @@ struct ContactsView: View {
 
                 Spacer()
 
-                if subscriptionManager.isPremium {
-                    Image(systemName: "chevron.right")
-                        .font(.footnote)
-                        .foregroundStyle(Color.pcTextSecondary)
-                } else {
-                    Image(systemName: "lock.fill")
-                        .font(.footnote)
-                        .foregroundStyle(Color.pcTextSecondary)
-                        .accessibilityLabel("Premium feature")
-                }
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
+                    .foregroundStyle(Color.pcTextSecondary)
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityHint(subscriptionManager.isPremium ? "Tap to compare and merge" : "Premium feature")
+        .accessibilityHint("Tap to compare and merge")
     }
 
     // MARK: - States
