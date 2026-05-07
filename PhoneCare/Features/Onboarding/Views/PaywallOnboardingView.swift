@@ -45,11 +45,11 @@ struct PaywallOnboardingView: View {
                             .foregroundStyle(Color.pcAccent)
                             .accessibilityHidden(true)
 
-                        Text("Unlock the full experience")
+                        Text("PhoneCare Premium does the heavy lifting.")
                             .typography(.title1)
                             .multilineTextAlignment(.center)
 
-                        Text("Get the most out of PhoneCare with premium features.")
+                        Text("All the heavy work, in one tap.")
                             .typography(.subheadline, color: .pcTextSecondary)
                             .multilineTextAlignment(.center)
                     }
@@ -57,11 +57,11 @@ struct PaywallOnboardingView: View {
 
                     // Benefits
                     VStack(alignment: .leading, spacing: PCTheme.Spacing.md) {
-                        BenefitRow(icon: "photo.on.rectangle.fill", text: "Unlimited duplicate photo cleanup")
-                        BenefitRow(icon: "person.2.fill", text: "Automatic contact merging")
-                        BenefitRow(icon: "chart.line.uptrend.xyaxis", text: "Battery health tracking over time")
-                        BenefitRow(icon: "lock.shield.fill", text: "Full privacy audit and tips")
-                        BenefitRow(icon: "bell.fill", text: "Smart reminders to keep your phone healthy")
+                        BenefitRow(icon: "photo.on.rectangle.fill", text: "Batch cleanups for photos and storage")
+                        BenefitRow(icon: "person.2.fill", text: "Merge duplicate contacts in one tap")
+                        BenefitRow(icon: "chart.line.uptrend.xyaxis", text: "Battery history beyond 24 hours")
+                        BenefitRow(icon: "wand.and.stars", text: "Step-by-step guided cleanup flows")
+                        BenefitRow(icon: "bell.badge", text: "Smart reminders that keep your phone tidy")
                     }
                     .padding(.horizontal, PCTheme.Spacing.md)
 

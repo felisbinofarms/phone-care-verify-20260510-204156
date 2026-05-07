@@ -74,7 +74,7 @@ struct PaywallBottomSheet: View {
                 .foregroundStyle(Color.pcAccent)
                 .voiceOverHidden()
 
-            Text("Unlock PhoneCare Premium")
+            Text("PhoneCare Premium does the heavy lifting.")
                 .typography(.title2)
                 .multilineTextAlignment(.center)
 
@@ -83,7 +83,7 @@ struct PaywallBottomSheet: View {
                     .typography(.subheadline, color: .pcTextSecondary)
                     .multilineTextAlignment(.center)
             } else {
-                Text("Get the most out of your phone with full access to all features.")
+                Text("All the heavy work, in one tap.")
                     .typography(.subheadline, color: .pcTextSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -94,11 +94,11 @@ struct PaywallBottomSheet: View {
 
     private var benefitsSection: some View {
         VStack(alignment: .leading, spacing: PCTheme.Spacing.sm) {
-            benefitRow(icon: "photo.on.rectangle", text: "Unlimited photo cleanup")
-            benefitRow(icon: "person.2", text: "Full contact merging")
-            benefitRow(icon: "chart.xyaxis.line", text: "Extended battery history")
-            benefitRow(icon: "wand.and.stars", text: "Guided cleanup wizards")
-            benefitRow(icon: "bell.badge", text: "Smart notifications")
+            benefitRow(icon: "photo.on.rectangle", text: "Batch cleanups for photos and storage")
+            benefitRow(icon: "person.2", text: "Merge duplicate contacts in one tap")
+            benefitRow(icon: "chart.xyaxis.line", text: "Battery history beyond 24 hours")
+            benefitRow(icon: "wand.and.stars", text: "Step-by-step guided cleanup flows")
+            benefitRow(icon: "bell.badge", text: "Smart reminders that keep your phone tidy")
         }
         .padding(.vertical, PCTheme.Spacing.sm)
     }

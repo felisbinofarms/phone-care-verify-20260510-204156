@@ -33,7 +33,7 @@ struct SubscriptionStatusView: View {
                                     .typography(.footnote, color: .pcTextSecondary)
                             }
                         } else {
-                            Text("Upgrade for full access")
+                            Text("Upgrade so PhoneCare can do the heavy lifting.")
                                 .typography(.footnote, color: .pcTextSecondary)
                         }
                     }
