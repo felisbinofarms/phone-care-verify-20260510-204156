@@ -14,22 +14,6 @@ final class PaywallViewModel {
     private(set) var purchaseError: String?
     private(set) var purchaseComplete: Bool = false
 
-    // MARK: - Re-show Limiting
-
-    private static let lastShownKey = "PaywallLastShownDate"
-    private static let reshowInterval: TimeInterval = 7 * 24 * 3600 // 1 week
-
-    var shouldShow: Bool {
-        guard let lastShown = UserDefaults.standard.object(forKey: Self.lastShownKey) as? Date else {
-            return true
-        }
-        return Date().timeIntervalSince(lastShown) >= Self.reshowInterval
-    }
-
-    func recordShown() {
-        UserDefaults.standard.set(Date(), forKey: Self.lastShownKey)
-    }
-
     // MARK: - Load
 
     func load(subscriptionManager: SubscriptionManager) async {
@@ -149,6 +133,64 @@ enum PaywallPricingContent {
 
         return "Some phone cleaner apps cost \(competitorAnnualCostText). PhoneCare annual plan is \(annualPlan.displayPrice)/year."
     }
+}
+
+// MARK: - Re-show Triggers
+
+extension PaywallViewModel {
+    /// Source that opens the paywall. Drives both the per-trigger session-scope
+    /// suppression and the proactive-trigger persisted cooldown.
+    enum Trigger: String, CaseIterable {
+        case userInitiated   // Settings upgrade button, explicit user ask, always shows
+        case batchDelete     // Photo batch friction prompt, at most once per session
+        case gatedCTA        // Premium-gated CTA tap, at most once per session
+        case scanMilestone   // Proactive after Nth scan, at most once per 7 days
+
+        fileprivate var defaultsKey: String { "PaywallLastShown_\(rawValue)" }
+
+        fileprivate var persistedCooldown: TimeInterval? {
+            switch self {
+            case .scanMilestone: return 7 * 24 * 3600
+            default: return nil
+            }
+        }
+    }
+
+    @MainActor
+    private static var sessionShown: Set<Trigger> = []
+
+    /// Returns true when the paywall should be opened for the given trigger.
+    /// `userInitiated` always returns true. Other triggers respect a session-scope
+    /// "shown once" rule, plus a persisted cooldown for proactive triggers.
+    static func shouldShow(for trigger: Trigger) -> Bool {
+        if trigger == .userInitiated { return true }
+        if sessionShown.contains(trigger) { return false }
+        guard let cooldown = trigger.persistedCooldown else { return true }
+        guard let lastShown = UserDefaults.standard.object(forKey: trigger.defaultsKey) as? Date else {
+            return true
+        }
+        return Date().timeIntervalSince(lastShown) >= cooldown
+    }
+
+    /// Marks a paywall open as having occurred for the given trigger.
+    /// Always records to the in-memory session set; only persists a timestamp
+    /// for triggers that have a persisted cooldown (currently `.scanMilestone`).
+    static func recordShown(for trigger: Trigger) {
+        sessionShown.insert(trigger)
+        if trigger.persistedCooldown != nil {
+            UserDefaults.standard.set(Date(), forKey: trigger.defaultsKey)
+        }
+    }
+
+    #if DEBUG
+    /// Clears all trigger state. For unit tests only.
+    static func resetTriggerStateForTesting() {
+        sessionShown.removeAll()
+        for trigger in Trigger.allCases {
+            UserDefaults.standard.removeObject(forKey: trigger.defaultsKey)
+        }
+    }
+    #endif
 }
 
 extension Product {

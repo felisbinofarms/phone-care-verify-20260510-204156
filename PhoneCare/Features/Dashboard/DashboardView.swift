@@ -51,7 +51,7 @@ struct DashboardView: View {
             }
         }
         .sheet(isPresented: $showPaywall) {
-            PaywallBottomSheet()
+            PaywallBottomSheet(trigger: .gatedCTA)
         }
     }
 

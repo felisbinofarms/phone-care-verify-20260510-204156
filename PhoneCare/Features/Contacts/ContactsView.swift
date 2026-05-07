@@ -71,7 +71,7 @@ struct ContactsView: View {
             )
         }
         .sheet(isPresented: $showPaywall) {
-            PaywallBottomSheet()
+            PaywallBottomSheet(trigger: .gatedCTA)
         }
         .alert(item: $viewModel.alertInfo) { alert in
             Alert(

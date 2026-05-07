@@ -112,7 +112,7 @@ struct PhotosView: View {
             )
         }
         .sheet(isPresented: $showPaywall) {
-            PaywallBottomSheet()
+            PaywallBottomSheet(trigger: .batchDelete)
         }
         .confirmationDialog(
             "Delete \(pendingBatchDeleteCount) photos in one tap?",

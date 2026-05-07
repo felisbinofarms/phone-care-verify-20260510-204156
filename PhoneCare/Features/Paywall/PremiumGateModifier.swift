@@ -16,7 +16,7 @@ struct PremiumGateModifier: ViewModifier {
                 }
             }
             .sheet(isPresented: $showPaywall) {
-                PaywallBottomSheet()
+                PaywallBottomSheet(trigger: .gatedCTA)
             }
     }
 }

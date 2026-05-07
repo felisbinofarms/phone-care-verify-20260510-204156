@@ -7,6 +7,7 @@ struct PaywallBottomSheet: View {
     @State private var viewModel = PaywallViewModel()
 
     var contextualBenefit: String?
+    var trigger: PaywallViewModel.Trigger = .userInitiated
     @State private var showComparePlans = false
 
     var body: some View {
@@ -58,7 +59,7 @@ struct PaywallBottomSheet: View {
         .presentationDragIndicator(.hidden)
         .task {
             await viewModel.load(subscriptionManager: subscriptionManager)
-            viewModel.recordShown()
+            PaywallViewModel.recordShown(for: trigger)
         }
         .onChange(of: viewModel.purchaseComplete) { _, complete in
             if complete { dismiss() }

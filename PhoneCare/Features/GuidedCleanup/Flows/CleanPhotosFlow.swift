@@ -84,7 +84,7 @@ struct CleanPhotosFlow: View {
                 isScanning = false
             }
             .sheet(isPresented: $showPaywall) {
-                PaywallBottomSheet()
+                PaywallBottomSheet(trigger: .gatedCTA)
             }
         }
     }

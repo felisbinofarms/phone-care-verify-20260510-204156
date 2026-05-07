@@ -78,7 +78,7 @@ struct CleanContactsFlow: View {
                 }
             }
             .sheet(isPresented: $showPaywall) {
-                PaywallBottomSheet()
+                PaywallBottomSheet(trigger: .gatedCTA)
             }
         }
     }

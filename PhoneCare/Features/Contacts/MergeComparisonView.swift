@@ -70,7 +70,7 @@ struct MergeComparisonView: View {
                 Text("This will combine \(group.contactIDs.count) entries into a single contact. You can undo this for 30 seconds after merging.")
         }
         .sheet(isPresented: $showPaywall) {
-            PaywallBottomSheet()
+            PaywallBottomSheet(trigger: .gatedCTA)
         }
     }
 

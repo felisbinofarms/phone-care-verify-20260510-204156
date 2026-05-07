@@ -34,7 +34,7 @@ struct BatteryView: View {
             viewModel.load(dataManager: dataManager)
         }
         .sheet(isPresented: $showPaywall) {
-            PaywallBottomSheet()
+            PaywallBottomSheet(trigger: .gatedCTA)
         }
     }
 
