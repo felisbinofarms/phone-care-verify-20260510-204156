@@ -10,7 +10,7 @@ struct BatteryTrendChart: View {
     @State private var selectedSnapshot: BatterySnapshot?
 
     private var isGated: Bool {
-        !isPremium && timeRange != .thirtyDays
+        !isPremium && timeRange != .oneDay
     }
 
     var body: some View {
@@ -142,7 +142,7 @@ struct BatteryTrendChart: View {
                 .typography(.subheadline, color: .pcTextSecondary)
                 .multilineTextAlignment(.center)
 
-            Text("Unlock Premium to see 90-day and yearly battery trends.")
+            Text("Unlock Premium to see 30-day, 90-day, and yearly battery trends.")
                 .typography(.footnote, color: .pcTextSecondary)
                 .multilineTextAlignment(.center)
 

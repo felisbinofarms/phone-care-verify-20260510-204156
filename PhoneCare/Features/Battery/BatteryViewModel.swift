@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 enum BatteryTimeRange: String, CaseIterable, Identifiable {
+    case oneDay = "1 Day"
     case thirtyDays = "30 Days"
     case ninetyDays = "90 Days"
     case oneYear = "1 Year"
@@ -10,6 +11,7 @@ enum BatteryTimeRange: String, CaseIterable, Identifiable {
 
     var days: Int {
         switch self {
+        case .oneDay:      return 1
         case .thirtyDays:  return 30
         case .ninetyDays:  return 90
         case .oneYear:     return 365
@@ -39,7 +41,7 @@ final class BatteryViewModel {
     private(set) var tips: [BatteryTip] = []
     private(set) var isLoading: Bool = false
 
-    var selectedTimeRange: BatteryTimeRange = .thirtyDays
+    var selectedTimeRange: BatteryTimeRange = .oneDay
 
     // MARK: - Computed
 

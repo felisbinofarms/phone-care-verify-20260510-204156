@@ -99,6 +99,7 @@ struct BatteryViewModelTests {
 
     @Test("BatteryTimeRange day counts are correct")
     func batteryTimeRangeDays() {
+        #expect(BatteryTimeRange.oneDay.days == 1)
         #expect(BatteryTimeRange.thirtyDays.days == 30)
         #expect(BatteryTimeRange.ninetyDays.days == 90)
         #expect(BatteryTimeRange.oneYear.days == 365)
