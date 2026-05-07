@@ -7,6 +7,7 @@ struct PhoneCareApp: App {
     @State private var subscriptionManager = SubscriptionManager()
     @State private var permissionManager = PermissionManager()
     @State private var dataManager = DataManager()
+    @State private var trialReminderService = TrialReminderService()
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,7 @@ struct PhoneCareApp: App {
                 .environment(subscriptionManager)
                 .environment(permissionManager)
                 .environment(dataManager)
+                .environment(trialReminderService)
                 .modelContainer(dataManager.modelContainer)
                 .preferredColorScheme(appState.resolvedColorScheme)
                 .task {
@@ -22,9 +24,23 @@ struct PhoneCareApp: App {
                     subscriptionManager.startTransactionListener()
                     await subscriptionManager.loadProducts()
                     await subscriptionManager.checkEntitlement()
+                    await trialReminderService.sync(
+                        isInTrial: subscriptionManager.isInTrial,
+                        productID: subscriptionManager.currentProductID,
+                        expirationDate: subscriptionManager.expirationDate
+                    )
                 }
                 .task {
                     dataManager.enforceRetention()
+                }
+                .onChange(of: subscriptionManager.isInTrial) { _, _ in
+                    Task {
+                        await trialReminderService.sync(
+                            isInTrial: subscriptionManager.isInTrial,
+                            productID: subscriptionManager.currentProductID,
+                            expirationDate: subscriptionManager.expirationDate
+                        )
+                    }
                 }
         }
     }
