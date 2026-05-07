@@ -77,35 +77,61 @@ struct PhotosViewModelTests {
         #expect(vm.selectedCount == 3)
     }
 
-    // MARK: - Premium gating
+    // MARK: - Batch delete intent (Q1=b: scan visible, batch action gated)
 
-    @Test("isGroupAccessible returns true for any index when isPremium")
-    func isGroupAccessible_premium() {
+    @Test("batchDeleteIntent returns empty when no photos are selected, regardless of premium")
+    func batchDeleteIntent_emptySelection_returnsEmpty() {
         let vm = PhotosViewModel()
-        for index in 0..<10 {
-            #expect(vm.isGroupAccessible(index: index, isPremium: true))
+        #expect(vm.batchDeleteIntent(isPremium: false) == .empty)
+        #expect(vm.batchDeleteIntent(isPremium: true) == .empty)
+    }
+
+    @Test("batchDeleteIntent returns proceed for free user with one photo selected")
+    func batchDeleteIntent_singleSelection_freeUser_returnsProceed() {
+        let vm = PhotosViewModel()
+        vm.toggleSelection("photo1")
+        #expect(vm.batchDeleteIntent(isPremium: false) == .proceed)
+    }
+
+    @Test("batchDeleteIntent returns proceed for premium user with one photo selected")
+    func batchDeleteIntent_singleSelection_premiumUser_returnsProceed() {
+        let vm = PhotosViewModel()
+        vm.toggleSelection("photo1")
+        #expect(vm.batchDeleteIntent(isPremium: true) == .proceed)
+    }
+
+    @Test("batchDeleteIntent returns showFrictionPrompt for free user with multi-select")
+    func batchDeleteIntent_multiSelection_freeUser_returnsFrictionPrompt() {
+        let vm = PhotosViewModel()
+        vm.selectAll(in: ["a", "b", "c"])
+        #expect(vm.batchDeleteIntent(isPremium: false) == .showFrictionPrompt)
+    }
+
+    @Test("batchDeleteIntent returns proceed for premium user with multi-select")
+    func batchDeleteIntent_multiSelection_premiumUser_returnsProceed() {
+        let vm = PhotosViewModel()
+        vm.selectAll(in: ["a", "b", "c"])
+        #expect(vm.batchDeleteIntent(isPremium: true) == .proceed)
+    }
+
+    @Test("All injected duplicate groups are exposed as-is, no premium-tier filtering")
+    func duplicateGroups_allVisibleRegardlessOfPremium() {
+        let vm = PhotosViewModel()
+        let groups = (0..<5).map { index in
+            DuplicateGroup(
+                id: "g\(index)",
+                assetIdentifiers: ["a\(index)", "b\(index)"],
+                suggestedKeepIdentifier: "a\(index)",
+                estimatedSavingsBytes: 1_000_000
+            )
         }
-    }
-
-    @Test("isGroupAccessible returns false for index at freeGroupLimit when not premium")
-    func isGroupAccessible_free_atLimit() {
-        let vm = PhotosViewModel()
-        #expect(vm.isGroupAccessible(index: vm.freeGroupLimit, isPremium: false) == false)
-    }
-
-    @Test("isGroupAccessible returns true for index below freeGroupLimit when not premium")
-    func isGroupAccessible_free_belowLimit() {
-        let vm = PhotosViewModel()
-        for index in 0..<vm.freeGroupLimit {
-            #expect(vm.isGroupAccessible(index: index, isPremium: false))
-        }
-    }
-
-    @Test("visibleDuplicateGroups returns empty for both premium and free on a fresh instance")
-    func visibleDuplicateGroups_emptyBaseline() {
-        let vm = PhotosViewModel()
-        #expect(vm.visibleDuplicateGroups(isPremium: true).isEmpty)
-        #expect(vm.visibleDuplicateGroups(isPremium: false).isEmpty)
+        vm.injectTestData(
+            duplicateGroups: groups,
+            screenshotIDs: [],
+            blurryIDs: [],
+            largeVideoIDs: []
+        )
+        #expect(vm.duplicateGroups.count == 5)
     }
 
     // MARK: - Category description

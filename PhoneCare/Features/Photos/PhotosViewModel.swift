@@ -59,9 +59,6 @@ final class PhotosViewModel {
     private(set) var lastDeletedSize: Int64 = 0
     var showUndoToast: Bool = false
 
-    // Premium gating
-    private(set) var freeGroupLimit: Int = 3
-
     // MARK: - Progress (pass-through from analyzer)
 
     var scanProgress: Double { analyzer.progress }
@@ -323,15 +320,20 @@ final class PhotosViewModel {
         showUndoToast = false
     }
 
-    // MARK: - Premium Helpers
+    // MARK: - Batch Delete Intent
 
-    func isGroupAccessible(index: Int, isPremium: Bool) -> Bool {
-        isPremium || index < freeGroupLimit
+    /// What the view should do when the user taps the batch-delete CTA.
+    /// Free users with multi-select hit a friction prompt; everyone else proceeds.
+    enum BatchDeleteIntent {
+        case empty
+        case proceed
+        case showFrictionPrompt
     }
 
-    func visibleDuplicateGroups(isPremium: Bool) -> [DuplicateGroup] {
-        if isPremium { return duplicateGroups }
-        return Array(duplicateGroups.prefix(freeGroupLimit))
+    func batchDeleteIntent(isPremium: Bool) -> BatchDeleteIntent {
+        if selectedPhotoIDs.isEmpty { return .empty }
+        if !isPremium && selectedPhotoIDs.count > 1 { return .showFrictionPrompt }
+        return .proceed
     }
 
     // MARK: - Persistence

@@ -7,6 +7,8 @@ struct PhotosView: View {
     @State private var viewModel = PhotosViewModel()
     @State private var showPaywall = false
     @State private var showSharePrompt = false
+    @State private var showFrictionPrompt = false
+    @State private var pendingBatchDeleteCount = 0
     @State private var sharePromptManager = SharePromptManager()
 
     var body: some View {
@@ -111,6 +113,21 @@ struct PhotosView: View {
         }
         .sheet(isPresented: $showPaywall) {
             PaywallBottomSheet()
+        }
+        .confirmationDialog(
+            "Delete \(pendingBatchDeleteCount) photos in one tap?",
+            isPresented: $showFrictionPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Try Premium") {
+                showPaywall = true
+            }
+            Button("Delete one at a time") {
+                viewModel.deselectAll()
+            }
+            Button("Not now", role: .cancel) { }
+        } message: {
+            Text("Premium handles batch delete in one tap. Free is one photo at a time. Want to upgrade?")
         }
     }
 
@@ -310,7 +327,7 @@ struct PhotosView: View {
     }
 
     private var duplicatesContent: some View {
-        let groups = viewModel.visibleDuplicateGroups(isPremium: subscriptionManager.isPremium)
+        let groups = viewModel.duplicateGroups
         return VStack(spacing: PCTheme.Spacing.md) {
             ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
                 DuplicateGroupView(
@@ -322,36 +339,6 @@ struct PhotosView: View {
                         viewModel.selectAll(in: group.duplicateIdentifiers)
                     }
                 )
-            }
-
-            premiumGateMessage(
-                totalCount: viewModel.duplicateGroups.count,
-                shownCount: groups.count
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func premiumGateMessage(totalCount: Int, shownCount: Int) -> some View {
-        if !subscriptionManager.isPremium && totalCount > shownCount {
-            CardView {
-                VStack(spacing: PCTheme.Spacing.md) {
-                    Image(systemName: "lock.fill")
-                        .font(.title2)
-                        .foregroundStyle(Color.pcTextSecondary)
-                        .voiceOverHidden()
-
-                    Text("\(totalCount - shownCount) more groups available with Premium")
-                        .typography(.subheadline, color: .pcTextSecondary)
-                        .multilineTextAlignment(.center)
-
-                    Button("Unlock All") {
-                        showPaywall = true
-                    }
-                    .primaryCTAStyle()
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, PCTheme.Spacing.sm)
             }
         }
     }
@@ -471,7 +458,15 @@ struct PhotosView: View {
             Spacer()
 
             Button("Delete") {
-                viewModel.prepareBatchDelete()
+                switch viewModel.batchDeleteIntent(isPremium: subscriptionManager.isPremium) {
+                case .empty:
+                    return
+                case .showFrictionPrompt:
+                    pendingBatchDeleteCount = viewModel.selectedCount
+                    showFrictionPrompt = true
+                case .proceed:
+                    viewModel.prepareBatchDelete()
+                }
             }
             .primaryCTAStyle()
             .frame(width: 120)
