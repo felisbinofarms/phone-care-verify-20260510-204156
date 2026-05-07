@@ -75,7 +75,7 @@ struct HonestAlternativeView: View {
             Divider()
                 .padding(.horizontal, PCTheme.Spacing.md)
 
-            // PhoneCare row — highlighted
+            // PhoneCare row, highlighted
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("PhoneCare")
@@ -110,8 +110,8 @@ struct HonestAlternativeView: View {
         VStack(alignment: .leading, spacing: PCTheme.Spacing.md) {
             differentiatorRow(
                 icon: "checkmark.seal.fill",
-                text: "7-day free trial",
-                detail: "Try everything before you pay — no credit card charges during your trial."
+                text: "7-day free trial on monthly and annual",
+                detail: "Try everything before you pay. No credit card charges during your trial."
             )
             differentiatorRow(
                 icon: "arrow.uturn.backward.circle.fill",
@@ -120,7 +120,7 @@ struct HonestAlternativeView: View {
             )
             differentiatorRow(
                 icon: "lock.shield.fill",
-                text: "Zero trackers — everything stays on your phone",
+                text: "Zero trackers, everything stays on your phone",
                 detail: "We do not collect, upload, or share your data. All scans happen on-device."
             )
         }

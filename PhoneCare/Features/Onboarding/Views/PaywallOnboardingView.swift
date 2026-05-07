@@ -132,7 +132,7 @@ struct PaywallOnboardingView: View {
                         ProgressView()
                             .tint(.white)
                     } else {
-                        Text("Start free trial")
+                        Text(purchaseButtonTitle)
                     }
                 }
                 .primaryCTAStyle()
@@ -218,6 +218,17 @@ struct PaywallOnboardingView: View {
         // Pre-select annual plan
         selectedProductID = sortedProducts.first(where: { isAnnual($0) })?.id
             ?? sortedProducts.last?.id
+    }
+
+    private var purchaseButtonTitle: String {
+        guard let id = selectedProductID,
+              let product = subscriptionManager.products.first(where: { $0.id == id }) else {
+            return "Subscribe"
+        }
+        if product.subscription?.introductoryOffer?.paymentMode == .freeTrial {
+            return "Start free trial"
+        }
+        return "Subscribe for \(product.displayPrice)"
     }
 
     private func handlePurchase() async {
