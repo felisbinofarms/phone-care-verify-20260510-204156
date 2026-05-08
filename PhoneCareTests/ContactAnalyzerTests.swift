@@ -421,4 +421,57 @@ struct ContactAnalyzerTests {
 
         #expect(mock.executeCallCount == 0)
     }
+
+    // MARK: - restoreMergedContacts error paths (#118)
+
+    @Test("restoreMergedContacts rethrows when CNContactStore.execute throws")
+    func restoreMergedContacts_executeThrows_rethrows() async throws {
+        let mock = MockContactStore()
+        mock.executeShouldThrow = NSError(domain: CNErrorDomain, code: 400, userInfo: nil)
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        let backup = ContactBackup(
+            originalContactData: sampleVCard,
+            mergedContactID: "primary-throws",
+            mergeDate: Date()
+        )
+        try dataManager.save(backup)
+
+        await #expect(throws: (any Error).self) {
+            try await analyzer.restoreMergedContacts(
+                mergedInto: "primary-throws",
+                mergedAfter: Date().addingTimeInterval(-1),
+                dataManager: dataManager
+            )
+        }
+
+        // executeCallCount stays at 0 because the throwing branch in the mock
+        // returns before incrementing, confirming the failure was the store.
+        #expect(mock.executeCallCount == 0)
+    }
+
+    @Test("mergeContacts silently skips removeIDs that are missing from the store")
+    func mergeContacts_partialMatch_skipsMissingRemoveIDs() async throws {
+        let mock = MockContactStore()
+        mock.contactsByIdentifier["primary"] = makeContact(given: "Eve")
+        mock.contactsByIdentifier["dup-real"] = makeContact(given: "Eve")
+        // "dup-missing" is intentionally NOT registered, exercising the
+        // try?/continue defensive branch at line 151-154 of ContactAnalyzer.
+
+        let analyzer = ContactAnalyzer(contactStore: mock)
+        let dataManager = DataManager(inMemory: true)
+
+        try await analyzer.mergeContacts(
+            keepIdentifier: "primary",
+            removeIdentifiers: ["dup-real", "dup-missing"],
+            dataManager: dataManager
+        )
+
+        // Only the valid duplicate should have been backed up; the missing
+        // one is skipped without aborting the whole merge.
+        let backups = try dataManager.fetch(ContactBackup.self)
+        #expect(backups.count == 1)
+        #expect(mock.executeCallCount == 1)
+    }
 }

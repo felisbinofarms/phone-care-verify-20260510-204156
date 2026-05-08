@@ -277,4 +277,67 @@ struct OnboardingViewModelTests {
     func scanStageIdle() {
         #expect(ScanStage.idle.message == "Getting ready...")
     }
+
+    // MARK: - savePreferences error / edge paths (#118)
+    //
+    // `runScan` cannot be exercised in unit tests because it requires concrete
+    // analyzers tied to Photos/Contacts permissions; cancellation and timeout
+    // surfaces therefore cannot be driven directly. The two tests below cover
+    // the reachable defensive paths for `savePreferences`: a save call that
+    // happens before any scan ran, and a repeated save that must remain
+    // idempotent.
+
+    @Test("savePreferences without scan results marks onboarding done and persists prefs")
+    func savePreferences_withoutScanResults_completesAndMarksOnboardingDone() async throws {
+        // AppState reads `hasCompletedOnboarding` from UserDefaults in init;
+        // clear before the test so this run is deterministic, and clear after
+        // so it does not leak to other tests sharing the suite UserDefaults.
+        UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding")
+        defer { UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding") }
+
+        let vm = OnboardingViewModel()
+        vm.toggleGoal(.cleanPhotos)
+        vm.phoneFeeling = .great
+        vm.techSavvyLevel = .advanced
+
+        let dataManager = DataManager(inMemory: true)
+        let appState = AppState()
+
+        await vm.savePreferences(to: dataManager, appState: appState)
+
+        #expect(appState.hasCompletedOnboarding == true)
+        let prefs = try dataManager.userPreferences()
+        #expect(prefs.onboardingCompleted == true)
+        #expect(prefs.goals.contains("cleanPhotos"))
+        #expect(prefs.phoneFeeling == "great")
+        #expect(prefs.techSavvyLevel == TechSavvyLevel.advanced.rawValue)
+
+        // No scan ran, so no ScanResult should have been written.
+        let scans = try dataManager.fetch(ScanResult.self)
+        #expect(scans.isEmpty)
+    }
+
+    @Test("savePreferences called twice does not create duplicate UserPreferences")
+    func savePreferences_calledTwice_remainsIdempotent() async throws {
+        UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding")
+        defer { UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding") }
+
+        let dataManager = DataManager(inMemory: true)
+        let appState = AppState()
+
+        let vm1 = OnboardingViewModel()
+        vm1.toggleGoal(.freeUpSpace)
+        await vm1.savePreferences(to: dataManager, appState: appState)
+
+        let vm2 = OnboardingViewModel()
+        vm2.toggleGoal(.checkBattery)
+        await vm2.savePreferences(to: dataManager, appState: appState)
+
+        // userPreferences() is the single-row contract; a second save must
+        // overwrite, not duplicate. fetch must return at most one row.
+        let allPrefs = try dataManager.fetch(UserPreferences.self)
+        #expect(allPrefs.count == 1)
+        // The second call wins.
+        #expect(allPrefs.first?.goals.contains("checkBattery") == true)
+    }
 }

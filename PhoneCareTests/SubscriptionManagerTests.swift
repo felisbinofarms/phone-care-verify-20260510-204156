@@ -213,6 +213,41 @@ struct SubscriptionManagerTests {
         #expect(manager.isLoading == false)
     }
 
+    // MARK: - Additional error paths (#118)
+    //
+    // `purchase(_:)` cannot be exercised in tests because `StoreKit.Product` is
+    // non-constructible without a real StoreKit configuration; the existing
+    // suite covers post-IO state via `applyPurchaseOutcome` instead. The two
+    // tests below exercise additional reachable error surfaces on
+    // `loadProducts` to deepen the safety net per #118: a network-timeout
+    // simulation, and a state-isolation guarantee that a load failure does
+    // not flip premium on or off.
+
+    @Test("loadProducts surfaces purchaseError when the loader throws a network timeout")
+    func loadProducts_networkTimeoutError_setsPurchaseError() async {
+        struct TimeoutLoader: StoreKitProductLoading {
+            func loadProducts(ids: Set<String>) async throws -> [Product] {
+                throw URLError(.timedOut)
+            }
+        }
+        let manager = SubscriptionManager(productLoader: TimeoutLoader())
+        await manager.loadProducts()
+        #expect(manager.products.isEmpty)
+        #expect(manager.purchaseError != nil)
+        #expect(manager.isLoading == false)
+    }
+
+    @Test("loadProducts failure does not flip isPremium")
+    func loadProducts_throws_isPremiumUntouched() async {
+        UserDefaults.standard.removeObject(forKey: "PhoneCare_isPremium")
+        let manager = SubscriptionManager(productLoader: ThrowingProductLoader())
+        let initial = manager.isPremium
+        await manager.loadProducts()
+        // A product-load failure is unrelated to entitlement state and must
+        // not corrupt isPremium in either direction.
+        #expect(manager.isPremium == initial)
+    }
+
     // MARK: - Purchase outcome handling — #104
 
     @Test("applyPurchaseOutcome(.completed) calls checkEntitlement and updates premium state")

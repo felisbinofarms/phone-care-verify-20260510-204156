@@ -104,4 +104,43 @@ struct BatteryViewModelTests {
         #expect(BatteryTimeRange.ninetyDays.days == 90)
         #expect(BatteryTimeRange.oneYear.days == 365)
     }
+
+    // MARK: - Error-path / resilience (#118)
+    //
+    // `BatteryViewModel.load(dataManager:)` does not have an injectable error
+    // seam (`DataManager` is concrete), so these tests exercise the reachable
+    // defensive paths: empty store and repeated calls. The behavioral contract
+    // we lock in is that `load` always populates `tips`, never crashes, and
+    // leaves `isLoading == false` when it returns, even with no scan history.
+
+    @Test("load with empty DataManager populates tips and leaves isLoading false")
+    func load_emptyDataManager_populatesTipsAndShowsDefaults() {
+        let vm = BatteryViewModel()
+        let dataManager = DataManager(inMemory: true)
+        vm.load(dataManager: dataManager)
+
+        // General tips always render regardless of data state.
+        #expect(vm.tips.count > 0)
+        // Defer should clear the loading flag.
+        #expect(vm.isLoading == false)
+        // No scan history means defaults stay.
+        #expect(vm.snapshots.isEmpty)
+        #expect(vm.maxCapacity == nil)
+    }
+
+    @Test("load called repeatedly does not duplicate snapshots or tips")
+    func load_calledRepeatedly_remainsConsistent() {
+        let vm = BatteryViewModel()
+        let dataManager = DataManager(inMemory: true)
+
+        vm.load(dataManager: dataManager)
+        let firstSnapshotsCount = vm.snapshots.count
+        let firstTipsCount = vm.tips.count
+
+        vm.load(dataManager: dataManager)
+        // Idempotency: repeated load must not accumulate state.
+        #expect(vm.snapshots.count == firstSnapshotsCount)
+        #expect(vm.tips.count == firstTipsCount)
+        #expect(vm.isLoading == false)
+    }
 }

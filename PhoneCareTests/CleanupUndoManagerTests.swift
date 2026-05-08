@@ -341,4 +341,45 @@ struct CleanupUndoManagerTests {
         #expect(manager.isUndoAvailable(id: id) == false)
         #expect(await counter.value == 2)
     }
+
+    @Test("undo after cancelUndo returns false and does not invoke the handler")
+    func undo_afterCancelUndo_returnsFalse() async throws {
+        let manager = CleanupUndoManager()
+        let id = UUID()
+        let tracker = CallTracker()
+
+        manager.registerAction(
+            id: id, actionType: .photoDelete, itemCount: 1, duration: 60
+        ) {
+            await tracker.markCalled()
+        }
+
+        manager.cancelUndo(id: id)
+        let result = try await manager.undo(id: id)
+
+        #expect(result == false)
+        let wasCalled = await tracker.wasCalled
+        #expect(wasCalled == false)
+    }
+
+    @Test("undo called twice for the same action returns false on the second call")
+    func undo_calledTwice_secondReturnsFalse() async throws {
+        let manager = CleanupUndoManager()
+        let id = UUID()
+        let counter = AttemptCounter()
+
+        manager.registerAction(
+            id: id, actionType: .photoDelete, itemCount: 1, duration: 60
+        ) {
+            await counter.increment()
+        }
+
+        let firstResult = try await manager.undo(id: id)
+        let secondResult = try await manager.undo(id: id)
+
+        #expect(firstResult == true)
+        #expect(secondResult == false)
+        // Handler must run exactly once, not twice.
+        #expect(await counter.value == 1)
+    }
 }
