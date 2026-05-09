@@ -494,4 +494,83 @@ struct PhotoAnalyzerTests {
         #expect(result.largeVideoIdentifiers.isEmpty)
         #expect(result.largeVideoInfos.isEmpty)
     }
+
+    // MARK: - Screen recordings as a separate category (#71)
+
+    @Test("analyzeAssets puts screen recordings in their own category, not in largeVideos")
+    func analyzeAssets_screenRecordings_landInOwnCategoryNotLargeVideos() async {
+        let recording = makeAssetInfo(
+            id: "rec-1",
+            mediaType: .video,
+            estimatedFileSize: testLargeVideoThreshold + 100_000_000,
+            duration: 60,
+            isScreenRecording: true
+        )
+        let regularVideo = makeAssetInfo(
+            id: "vid-1",
+            mediaType: .video,
+            estimatedFileSize: testLargeVideoThreshold + 100_000_000,
+            duration: 30,
+            isScreenRecording: false
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [recording, regularVideo],
+            totalCount: 2,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.screenRecordingIdentifiers == ["rec-1"])
+        #expect(result.largeVideoIdentifiers == ["vid-1"])
+        #expect(result.screenRecordingCount == 1)
+        // No double-counting: a recording must not appear in both surfaces.
+        #expect(!result.largeVideoIdentifiers.contains("rec-1"))
+    }
+
+    @Test("analyzeAssets surfaces screen recordings regardless of file size")
+    func analyzeAssets_smallScreenRecording_isStillSurfaced() async {
+        let smallRecording = makeAssetInfo(
+            id: "rec-tiny",
+            mediaType: .video,
+            estimatedFileSize: 1_000_000,
+            duration: 5,
+            isScreenRecording: true
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [smallRecording],
+            totalCount: 1,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.screenRecordingIdentifiers == ["rec-tiny"])
+        #expect(result.screenRecordingInfos.first?.isScreenRecording == true)
+    }
+
+    @Test("analyzeAssets sorts screen recordings biggest-first")
+    func analyzeAssets_screenRecordings_sortedBiggestFirst() async {
+        let smaller = makeAssetInfo(
+            id: "rec-small",
+            mediaType: .video,
+            estimatedFileSize: 50_000_000,
+            isScreenRecording: true
+        )
+        let bigger = makeAssetInfo(
+            id: "rec-big",
+            mediaType: .video,
+            estimatedFileSize: 500_000_000,
+            isScreenRecording: true
+        )
+
+        let result = await PhotoAnalyzer.analyzeAssets(
+            [smaller, bigger],
+            totalCount: 2,
+            largeVideoThreshold: testLargeVideoThreshold,
+            skipSimilarShotsGrouping: true
+        )
+
+        #expect(result.screenRecordingIdentifiers == ["rec-big", "rec-small"])
+    }
 }

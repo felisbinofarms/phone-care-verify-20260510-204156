@@ -173,15 +173,16 @@ struct PhotosView: View {
 
             Spacer()
 
-            if viewModel.hasResults && viewModel.selectedCategory != .screenshots && viewModel.selectedCategory != .blurry && viewModel.selectedCategory != .largeVideos {
+            if viewModel.hasResults && viewModel.selectedCategory != .screenshots && viewModel.selectedCategory != .blurry && viewModel.selectedCategory != .largeVideos && viewModel.selectedCategory != .screenRecordings {
                 // No select-all for groups; handled within groups
             } else if viewModel.hasResults {
                 Button("Select All") {
                     let ids: [String]
                     switch viewModel.selectedCategory {
-                    case .screenshots: ids = viewModel.screenshotIDs
-                    case .blurry: ids = viewModel.blurryIDs
-                    case .largeVideos: ids = viewModel.largeVideoIDs
+                    case .screenshots:      ids = viewModel.screenshotIDs
+                    case .blurry:           ids = viewModel.blurryIDs
+                    case .largeVideos:      ids = viewModel.largeVideoIDs
+                    case .screenRecordings: ids = viewModel.screenRecordingIDs
                     default: ids = []
                     }
                     viewModel.selectAll(in: ids)
@@ -209,7 +210,35 @@ struct PhotosView: View {
             )
         case .largeVideos:
             largeVideosContent
+        case .screenRecordings:
+            screenRecordingsContent
         }
+    }
+
+    // MARK: - Sort Pickers (Q7: per-surface sort with default clearly selected)
+
+    @ViewBuilder
+    private var videoSortPicker: some View {
+        @Bindable var vm = viewModel
+        Picker("Sort", selection: $vm.largeVideoSort) {
+            ForEach(LargeVideoSortOrder.allCases) { order in
+                Text(order.label).tag(order)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityLabel("Sort order")
+    }
+
+    @ViewBuilder
+    private var screenshotSortPicker: some View {
+        @Bindable var vm = viewModel
+        Picker("Sort", selection: $vm.screenshotSort) {
+            ForEach(ScreenshotSortOrder.allCases) { order in
+                Text(order.label).tag(order)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityLabel("Sort order")
     }
 
     // MARK: - Large Videos (space-first: biggest video listed first)
@@ -224,7 +253,27 @@ struct PhotosView: View {
                     onToggle: { viewModel.toggleSelection($0) }
                 )
             } else {
-                ForEach(viewModel.largeVideoInfos) { info in
+                videoSortPicker
+                ForEach(viewModel.sortedLargeVideoInfos) { info in
+                    largeVideoRow(info: info)
+                }
+            }
+        }
+    }
+
+    // MARK: - Screen Recordings (Q7: dedicated surface, biggest-first default)
+
+    private var screenRecordingsContent: some View {
+        VStack(spacing: PCTheme.Spacing.sm) {
+            if viewModel.screenRecordingInfos.isEmpty {
+                PhotoGridView(
+                    photoIDs: viewModel.screenRecordingIDs,
+                    selectedIDs: viewModel.selectedPhotoIDs,
+                    onToggle: { viewModel.toggleSelection($0) }
+                )
+            } else {
+                videoSortPicker
+                ForEach(viewModel.sortedScreenRecordingInfos) { info in
                     largeVideoRow(info: info)
                 }
             }
@@ -291,7 +340,7 @@ struct PhotosView: View {
     }
 
     private var screenshotsByAgeContent: some View {
-        let ageGroups = viewModel.screenshotsByAge()
+        let ageGroups = viewModel.screenshotsByAge(sortOrder: viewModel.screenshotSort)
         return VStack(spacing: PCTheme.Spacing.md) {
             if ageGroups.isEmpty {
                 PhotoGridView(
@@ -300,6 +349,7 @@ struct PhotosView: View {
                     onToggle: { viewModel.toggleSelection($0) }
                 )
             } else {
+                screenshotSortPicker
                 ForEach(ageGroups) { group in
                     VStack(alignment: .leading, spacing: PCTheme.Spacing.sm) {
                         HStack {
@@ -357,7 +407,7 @@ struct PhotosView: View {
                     .typography(.headline)
                     .multilineTextAlignment(.center)
 
-                Text("We will look for duplicates, screenshots, blurry photos, and large videos.")
+                Text("We will look for duplicates, screenshots, blurry photos, large videos, and screen recordings.")
                     .typography(.subheadline, color: .pcTextSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)

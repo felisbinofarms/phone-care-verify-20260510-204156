@@ -283,4 +283,163 @@ struct PhotosViewModelTests {
         vm.dismissDeletedToast()
         #expect(vm.showUndoToast == false)
     }
+
+    // MARK: - Sort: Large Videos (#71)
+
+    private func makeVideoInfo(
+        id: String,
+        bytes: Int64,
+        date: Date?
+    ) -> LargeVideoInfo {
+        LargeVideoInfo(
+            id: id,
+            estimatedBytes: bytes,
+            durationSeconds: 30,
+            creationDate: date,
+            isScreenRecording: false
+        )
+    }
+
+    @Test("sortedLargeVideoInfos returns biggest first by default")
+    func sortedLargeVideos_biggestFirstDefault() {
+        let vm = PhotosViewModel()
+        let small = makeVideoInfo(id: "s", bytes: 100, date: Date(timeIntervalSince1970: 1000))
+        let big = makeVideoInfo(id: "b", bytes: 1000, date: Date(timeIntervalSince1970: 2000))
+        let medium = makeVideoInfo(id: "m", bytes: 500, date: Date(timeIntervalSince1970: 1500))
+        vm.injectTestData(
+            duplicateGroups: [],
+            screenshotIDs: [],
+            blurryIDs: [],
+            largeVideoIDs: ["s", "b", "m"],
+            largeVideoInfos: [small, big, medium]
+        )
+
+        #expect(vm.largeVideoSort == .biggestFirst)
+        #expect(vm.sortedLargeVideoInfos.map(\.id) == ["b", "m", "s"])
+    }
+
+    @Test("sortedLargeVideoInfos reorders to oldest-first when sort toggled")
+    func sortedLargeVideos_oldestFirstWhenToggled() {
+        let vm = PhotosViewModel()
+        let oldest = makeVideoInfo(id: "old", bytes: 100, date: Date(timeIntervalSince1970: 1000))
+        let middle = makeVideoInfo(id: "mid", bytes: 1000, date: Date(timeIntervalSince1970: 2000))
+        let newest = makeVideoInfo(id: "new", bytes: 500, date: Date(timeIntervalSince1970: 3000))
+        vm.injectTestData(
+            duplicateGroups: [],
+            screenshotIDs: [],
+            blurryIDs: [],
+            largeVideoIDs: ["old", "mid", "new"],
+            largeVideoInfos: [middle, newest, oldest]
+        )
+
+        vm.largeVideoSort = .oldestFirst
+        #expect(vm.sortedLargeVideoInfos.map(\.id) == ["old", "mid", "new"])
+    }
+
+    @Test("sortedScreenRecordingInfos respects the same sort toggle as large videos")
+    func sortedScreenRecordings_followsLargeVideoSort() {
+        let vm = PhotosViewModel()
+        // Bytes order: big > med > small
+        // Date order : oldest -> middle -> newest where IDs disagree with size
+        let big = LargeVideoInfo(id: "big", estimatedBytes: 1000, durationSeconds: 5, creationDate: Date(timeIntervalSince1970: 3000), isScreenRecording: true)
+        let med = LargeVideoInfo(id: "med", estimatedBytes: 500, durationSeconds: 5, creationDate: Date(timeIntervalSince1970: 1000), isScreenRecording: true)
+        let small = LargeVideoInfo(id: "small", estimatedBytes: 100, durationSeconds: 5, creationDate: Date(timeIntervalSince1970: 2000), isScreenRecording: true)
+        vm.injectTestData(
+            duplicateGroups: [],
+            screenshotIDs: [],
+            blurryIDs: [],
+            largeVideoIDs: [],
+            screenRecordingIDs: ["big", "med", "small"],
+            screenRecordingInfos: [big, med, small]
+        )
+
+        // Default biggest-first: by bytes desc.
+        #expect(vm.sortedScreenRecordingInfos.map(\.id) == ["big", "med", "small"])
+
+        vm.largeVideoSort = .oldestFirst
+        // Oldest-first: by creationDate asc. "med" has earliest date.
+        #expect(vm.sortedScreenRecordingInfos.map(\.id) == ["med", "small", "big"])
+    }
+
+    // MARK: - Sort: Screenshots bucketing (#71)
+
+    @Test("bucketScreenshotsByAge produces oldest-first groups by default")
+    func bucketScreenshots_oldestFirstDefault() {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let calendar = Calendar.current
+        let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: now)!
+        let twentyDaysAgo = calendar.date(byAdding: .day, value: -20, to: now)!
+        let twoMonthsAgo = calendar.date(byAdding: .month, value: -2, to: now)!
+        let sixMonthsAgo = calendar.date(byAdding: .month, value: -6, to: now)!
+
+        let groups = PhotosViewModel.bucketScreenshotsByAge(
+            [
+                ("a", twoDaysAgo),
+                ("b", twentyDaysAgo),
+                ("c", twoMonthsAgo),
+                ("d", sixMonthsAgo),
+            ],
+            now: now,
+            sortOrder: .oldestFirst
+        )
+
+        #expect(groups.map(\.title) == [
+            "Older than 90 Days",
+            "Older than 30 Days",
+            "Last Month",
+            "This Week",
+        ])
+    }
+
+    @Test("bucketScreenshotsByAge reverses to newest-first when toggled")
+    func bucketScreenshots_newestFirstWhenToggled() {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let calendar = Calendar.current
+        let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: now)!
+        let sixMonthsAgo = calendar.date(byAdding: .month, value: -6, to: now)!
+
+        let groups = PhotosViewModel.bucketScreenshotsByAge(
+            [("a", twoDaysAgo), ("b", sixMonthsAgo)],
+            now: now,
+            sortOrder: .newestFirst
+        )
+
+        #expect(groups.map(\.title) == ["This Week", "Older than 90 Days"])
+    }
+
+    @Test("bucketScreenshotsByAge buckets nil-date entries as oldest")
+    func bucketScreenshots_nilDate_treatedAsOldest() {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let groups = PhotosViewModel.bucketScreenshotsByAge(
+            [("unknown", nil)],
+            now: now,
+            sortOrder: .oldestFirst
+        )
+
+        #expect(groups.count == 1)
+        #expect(groups.first?.title == "Older than 90 Days")
+        #expect(groups.first?.ids == ["unknown"])
+    }
+
+    // MARK: - applyDeletion screen recordings (#71)
+
+    @Test("applyDeletion removes IDs from screenRecordingIDs and screenRecordingInfos")
+    func applyDeletion_removesScreenRecordings() {
+        let vm = PhotosViewModel()
+        let r1 = LargeVideoInfo(id: "r1", estimatedBytes: 100, durationSeconds: 5, creationDate: nil, isScreenRecording: true)
+        let r2 = LargeVideoInfo(id: "r2", estimatedBytes: 200, durationSeconds: 5, creationDate: nil, isScreenRecording: true)
+        vm.injectTestData(
+            duplicateGroups: [],
+            screenshotIDs: [],
+            blurryIDs: [],
+            largeVideoIDs: [],
+            screenRecordingIDs: ["r1", "r2"],
+            screenRecordingInfos: [r1, r2]
+        )
+
+        vm.applyDeletion(deletedIDs: ["r1"], count: 1, bytes: 100)
+
+        #expect(vm.screenRecordingIDs == ["r2"])
+        #expect(vm.screenRecordingInfos.map(\.id) == ["r2"])
+    }
 }

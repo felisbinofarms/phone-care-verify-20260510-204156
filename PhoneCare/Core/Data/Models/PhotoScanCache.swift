@@ -23,6 +23,9 @@ final class PhotoScanCache {
     /// JSON-encoded array of large video local identifiers: [String].
     var largeVideoIDs: Data = Data()
 
+    /// JSON-encoded array of screen-recording local identifiers: [String].
+    var screenRecordingIDs: Data = Data()
+
     var totalScannedCount: Int = 0
     var scanDate: Date = Date()
 
@@ -48,6 +51,10 @@ final class PhotoScanCache {
         (try? JSONDecoder().decode([String].self, from: largeVideoIDs)) ?? []
     }
 
+    func decodedScreenRecordingIDs() -> [String] {
+        (try? JSONDecoder().decode([String].self, from: screenRecordingIDs)) ?? []
+    }
+
     // MARK: - Encode Helpers
 
     static func encode<T: Encodable>(_ value: T) -> Data {
@@ -64,6 +71,7 @@ final class PhotoScanCache {
         screenshotIDs: [String] = [],
         blurryIDs: [String] = [],
         largeVideoIDs: [String] = [],
+        screenRecordingIDs: [String] = [],
         totalScannedCount: Int = 0,
         scanDate: Date = Date()
     ) {
@@ -74,6 +82,7 @@ final class PhotoScanCache {
         self.screenshotIDs = Self.encode(screenshotIDs)
         self.blurryIDs = Self.encode(blurryIDs)
         self.largeVideoIDs = Self.encode(largeVideoIDs)
+        self.screenRecordingIDs = Self.encode(screenRecordingIDs)
         self.totalScannedCount = totalScannedCount
         self.scanDate = scanDate
     }

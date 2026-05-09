@@ -112,6 +112,11 @@ struct PhotoAnalysisResult: Sendable {
     let largeVideoIdentifiers: [String]
     /// Large video infos sorted by estimated file size descending (biggest wins first).
     let largeVideoInfos: [LargeVideoInfo]
+    /// Screen-recording asset identifiers, separated from large videos so the
+    /// Photos UI can offer a dedicated review surface (Q7 launch decision).
+    let screenRecordingIdentifiers: [String]
+    /// Screen-recording metadata sorted biggest-first.
+    let screenRecordingInfos: [LargeVideoInfo]
     let blurryIdentifiers: [String]
 
     init(
@@ -120,6 +125,8 @@ struct PhotoAnalysisResult: Sendable {
         screenshotIdentifiers: [String],
         largeVideoIdentifiers: [String],
         largeVideoInfos: [LargeVideoInfo] = [],
+        screenRecordingIdentifiers: [String] = [],
+        screenRecordingInfos: [LargeVideoInfo] = [],
         blurryIdentifiers: [String]
     ) {
         self.totalPhotos = totalPhotos
@@ -127,6 +134,8 @@ struct PhotoAnalysisResult: Sendable {
         self.screenshotIdentifiers = screenshotIdentifiers
         self.largeVideoIdentifiers = largeVideoIdentifiers
         self.largeVideoInfos = largeVideoInfos
+        self.screenRecordingIdentifiers = screenRecordingIdentifiers
+        self.screenRecordingInfos = screenRecordingInfos
         self.blurryIdentifiers = blurryIdentifiers
     }
 
@@ -140,6 +149,7 @@ struct PhotoAnalysisResult: Sendable {
 
     var screenshotCount: Int { screenshotIdentifiers.count }
     var largeVideoCount: Int { largeVideoIdentifiers.count }
+    var screenRecordingCount: Int { screenRecordingIdentifiers.count }
     var blurryCount: Int { blurryIdentifiers.count }
 }
 
@@ -158,8 +168,10 @@ final class PhotoAnalyzer {
 
     // MARK: - Configuration
 
-    /// Minimum video file size to flag as "large" (50 MB)
-    private let largeVideoThreshold: Int64 = 50 * 1024 * 1024
+    /// Minimum video file size to flag as "large" (250 MB).
+    /// Q7 launch decision: focus the Large Videos surface on genuine
+    /// space-win candidates and avoid spamming the list with mid-size clips.
+    private let largeVideoThreshold: Int64 = 250 * 1024 * 1024
 
     // MARK: - Private
 
@@ -184,6 +196,7 @@ final class PhotoAnalyzer {
                 duplicateGroups: [],
                 screenshotIdentifiers: [],
                 largeVideoIdentifiers: [],
+                screenRecordingIdentifiers: [],
                 blurryIdentifiers: []
             )
             result = emptyResult
@@ -222,6 +235,7 @@ final class PhotoAnalyzer {
             screenshotIDs: analysisResult.screenshotIdentifiers,
             blurryIDs: analysisResult.blurryIdentifiers,
             largeVideoIDs: analysisResult.largeVideoIdentifiers,
+            screenRecordingIDs: analysisResult.screenRecordingIdentifiers,
             totalScannedCount: analysisResult.totalPhotos,
             scanDate: Date()
         )
@@ -248,6 +262,7 @@ final class PhotoAnalyzer {
                 duplicateGroups: [],
                 screenshotIdentifiers: [],
                 largeVideoIdentifiers: [],
+                screenRecordingIdentifiers: [],
                 blurryIdentifiers: []
             )
         }
@@ -331,9 +346,30 @@ final class PhotoAnalyzer {
         let screenshots = assetInfos.filter { $0.mediaSubtypes.contains(.photoScreenshot) }
         let screenshotIDs = screenshots.map(\.identifier)
 
-        // ── 2. Large videos (sorted biggest-first for space-first UX) ───────────
+        // ── 2. Screen recordings (own surface, regardless of size) ──────────────
+        // Screen recordings get their own review surface (Q7 launch decision).
+        // They are excluded from the Large Videos category below so a recording
+        // never appears in two places at once.
+        let screenRecordingAssets = assetInfos.filter {
+            $0.mediaType == .video && $0.isScreenRecording
+        }.sorted { $0.estimatedFileSize > $1.estimatedFileSize }
+
+        let screenRecordingIDs = screenRecordingAssets.map(\.identifier)
+        let screenRecordingInfos = screenRecordingAssets.map { v in
+            LargeVideoInfo(
+                id: v.identifier,
+                estimatedBytes: v.estimatedFileSize,
+                durationSeconds: v.duration,
+                creationDate: v.creationDate,
+                isScreenRecording: true
+            )
+        }
+
+        // ── 3. Large videos (non-recording videos over threshold, biggest-first) ─
         let largeVideoAssets = assetInfos.filter {
-            $0.mediaType == .video && $0.estimatedFileSize > largeVideoThreshold
+            $0.mediaType == .video
+            && !$0.isScreenRecording
+            && $0.estimatedFileSize > largeVideoThreshold
         }.sorted { $0.estimatedFileSize > $1.estimatedFileSize }
 
         let largeVideoIDs = largeVideoAssets.map(\.identifier)
@@ -343,7 +379,7 @@ final class PhotoAnalyzer {
                 estimatedBytes: v.estimatedFileSize,
                 durationSeconds: v.duration,
                 creationDate: v.creationDate,
-                isScreenRecording: v.isScreenRecording
+                isScreenRecording: false
             )
         }
 
@@ -552,6 +588,8 @@ final class PhotoAnalyzer {
             screenshotIdentifiers: screenshotIDs,
             largeVideoIdentifiers: largeVideoIDs,
             largeVideoInfos: largeVideoInfos,
+            screenRecordingIdentifiers: screenRecordingIDs,
+            screenRecordingInfos: screenRecordingInfos,
             blurryIdentifiers: blurryIDs
         )
     }
