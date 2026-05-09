@@ -1,6 +1,7 @@
 import Foundation
 import Photos
 import UIKit
+import Vision
 import OSLog
 
 // MARK: - Group Reason
@@ -172,6 +173,14 @@ final class PhotoAnalyzer {
     /// Q7 launch decision: focus the Large Videos surface on genuine
     /// space-win candidates and avoid spamming the list with mid-size clips.
     private let largeVideoThreshold: Int64 = 250 * 1024 * 1024
+
+    /// Vision feature-print distance threshold for grouping near-duplicates.
+    /// `VNFeaturePrintObservation.computeDistance` returns 0 for identical
+    /// images and grows with visual difference. 0.5 is a conservative starting
+    /// point for "obviously the same shot" while leaving headroom against
+    /// false-positives on visually similar but distinct moments. Easy to
+    /// tune as we learn from real user libraries.
+    static let similarShotsThreshold: Float = 0.5
 
     // MARK: - Private
 
@@ -484,7 +493,7 @@ final class PhotoAnalyzer {
             }
 
             if group.count >= 2 {
-                guard let best = group.max(by: { $0.estimatedFileSize < $1.estimatedFileSize }) ?? group.first else { continue }
+                let (best, keepReason) = await pickKeepBest(from: group, skipSharpness: skipSimilarShotsGrouping)
                 let savings = group
                     .filter { $0.identifier != best.identifier }
                     .reduce(Int64(0)) { $0 + $1.estimatedFileSize }
@@ -495,76 +504,73 @@ final class PhotoAnalyzer {
                     suggestedKeepIdentifier: best.identifier,
                     estimatedSavingsBytes: savings,
                     groupReason: .exactDuplicate,
-                    keepReason: "This copy has the largest file size, indicating it may be higher quality."
+                    keepReason: keepReason
                 ))
                 group.forEach { processedIdentifiers.insert($0.identifier) }
             }
             i += 1
         }
 
-        // — 4c. Similar shots via 8×8 perceptual hash ————————————————————————————
-        // Skipped by tests via `skipSimilarShotsGrouping: true`, since this loop
-        // calls `computePerceptualHash` which loads thumbnails via PHImageManager
-        // for real PHAsset identifiers — synthetic test identifiers don't resolve.
+        // ── 4c. Similar shots via Vision feature prints ─────────────────────────
+        // Apple's `VNFeaturePrintObservation` is a perceptual embedding generated
+        // by Vision's on-device model. Distance between two prints reflects
+        // visual similarity; 0 == identical. The 60-second time-bucket below
+        // is a cheap pre-filter so we only run Vision on plausibly-related shots.
+        // Tests pass `skipSimilarShotsGrouping: true` because Vision needs real
+        // image data, which synthetic test AssetInfos don't have.
         if !skipSimilarShotsGrouping {
             let remaining2 = photos.filter { !processedIdentifiers.contains($0.identifier) }
-            let sortedForPHash = remaining2.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+            let sortedForVision = remaining2.sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
 
-            let phashBucketWindow: TimeInterval = 60.0
-            var phashBuckets: [[AssetInfo]] = []
+            let bucketWindow: TimeInterval = 60.0
+            var visionBuckets: [[AssetInfo]] = []
             var currentBucket: [AssetInfo] = []
             var bucketAnchorDate: Date?
 
-            for photo in sortedForPHash {
+            for photo in sortedForVision {
                 guard let date = photo.creationDate else { continue }
-                if let anchor = bucketAnchorDate, date.timeIntervalSince(anchor) <= phashBucketWindow {
+                if let anchor = bucketAnchorDate, date.timeIntervalSince(anchor) <= bucketWindow {
                     currentBucket.append(photo)
                 } else {
-                    if currentBucket.count >= 2 { phashBuckets.append(currentBucket) }
+                    if currentBucket.count >= 2 { visionBuckets.append(currentBucket) }
                     currentBucket = [photo]
                     bucketAnchorDate = date
                 }
             }
-            if currentBucket.count >= 2 { phashBuckets.append(currentBucket) }
+            if currentBucket.count >= 2 { visionBuckets.append(currentBucket) }
 
-            for bucket in phashBuckets {
-                // Compute hashes for all photos in this time window
-                var hashPairs: [(info: AssetInfo, hash: UInt64)] = []
+            for bucket in visionBuckets {
+                struct Embedding {
+                    let info: AssetInfo
+                    let observation: VNFeaturePrintObservation
+                }
+                var prints: [Embedding] = []
                 for info in bucket {
-                    if let h = await computePerceptualHash(identifier: info.identifier) {
-                        hashPairs.append((info, h))
+                    if let obs = await computeFeaturePrint(identifier: info.identifier) {
+                        prints.append(Embedding(info: info, observation: obs))
                     }
                 }
-                guard hashPairs.count >= 2 else { continue }
+                guard prints.count >= 2 else { continue }
 
-                // Union-Find to cluster similar photos
-                let count = hashPairs.count
-                var parent = Array(0..<count)
-
-                func findRoot(_ idx: Int) -> Int {
-                    var idx = idx
-                    while parent[idx] != idx { idx = parent[idx] }
-                    return idx
-                }
-
-                for a in 0..<count {
-                    for b in (a + 1)..<count {
-                        if hammingDistance(hashPairs[a].hash, hashPairs[b].hash) <= 12 {
-                            let ra = findRoot(a), rb = findRoot(b)
-                            if ra != rb { parent[ra] = rb }
-                        }
+                let clusters = Self.clusterByDistance(
+                    items: prints,
+                    threshold: Self.similarShotsThreshold
+                ) { a, b in
+                    var d: Float = 0
+                    do {
+                        try a.observation.computeDistance(&d, to: b.observation)
+                        return d
+                    } catch {
+                        // On comparison failure, treat as far apart so the pair
+                        // is not clustered. Better to under-group than over-group.
+                        return .greatestFiniteMagnitude
                     }
                 }
 
-                var components: [Int: [AssetInfo]] = [:]
-                for idx in 0..<count {
-                    let root = findRoot(idx)
-                    components[root, default: []].append(hashPairs[idx].info)
-                }
-
-                for (_, members) in components where members.count >= 2 {
+                for cluster in clusters where cluster.count >= 2 {
+                    let members = cluster.map(\.info)
                     guard members.allSatisfy({ !processedIdentifiers.contains($0.identifier) }) else { continue }
-                    guard let best = members.max(by: { $0.estimatedFileSize < $1.estimatedFileSize }) ?? members.first else { continue }
+                    let (best, keepReason) = await pickKeepBest(from: members, skipSharpness: false)
                     let savings = members
                         .filter { $0.identifier != best.identifier }
                         .reduce(Int64(0)) { $0 + $1.estimatedFileSize }
@@ -575,7 +581,7 @@ final class PhotoAnalyzer {
                         suggestedKeepIdentifier: best.identifier,
                         estimatedSavingsBytes: savings,
                         groupReason: .similarShots,
-                        keepReason: "This photo has the largest file size in the group, suggesting it captures the most detail."
+                        keepReason: keepReason
                     ))
                     members.forEach { processedIdentifiers.insert($0.identifier) }
                 }
@@ -594,11 +600,13 @@ final class PhotoAnalyzer {
         )
     }
 
-    // MARK: - Perceptual Hash Helpers
+    // MARK: - Vision Feature Print Helpers
 
-    /// Requests an 8×8 thumbnail and computes an average-hash (aHash) for it.
-    /// Returns nil when the asset is unavailable locally.
-    private static func computePerceptualHash(identifier: String) async -> UInt64? {
+    /// Loads a 512x512 thumbnail of the asset and computes its Vision
+    /// feature-print observation. Returns nil when the asset is unavailable
+    /// locally, the thumbnail load times out, or Vision fails. Conservative
+    /// on failure: a missing print means the photo simply will not be grouped.
+    private static func computeFeaturePrint(identifier: String) async -> VNFeaturePrintObservation? {
         guard let asset = PHAsset.fetchAssets(
             withLocalIdentifiers: [identifier], options: nil
         ).firstObject else { return nil }
@@ -613,7 +621,7 @@ final class PhotoAnalyzer {
 
                     PHImageManager.default().requestImage(
                         for: asset,
-                        targetSize: CGSize(width: 8, height: 8),
+                        targetSize: CGSize(width: 512, height: 512),
                         contentMode: .aspectFill,
                         options: options
                     ) { image, _ in
@@ -634,35 +642,54 @@ final class PhotoAnalyzer {
             group.cancelAll()
             return nil
         }
-        return image.flatMap { Self.averageHash(from: $0) }
-    }
 
-    /// Converts a UIImage to an 8×8 greyscale average hash (64-bit aHash).
-    private static func averageHash(from image: UIImage) -> UInt64? {
-        guard let cgImage = image.cgImage else { return nil }
-        let side = 8
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        var pixelData = [UInt8](repeating: 0, count: side * side)
-        guard let context = CGContext(
-            data: &pixelData,
-            width: side, height: side,
-            bitsPerComponent: 8, bytesPerRow: side,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return nil }
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
-
-        let mean = Double(pixelData.reduce(UInt32(0)) { $0 + UInt32($1) }) / Double(pixelData.count)
-        var hash: UInt64 = 0
-        for (idx, pixel) in pixelData.enumerated() {
-            if Double(pixel) >= mean { hash |= (1 << idx) }
+        guard let cgImage = image?.cgImage else { return nil }
+        let request = VNGenerateImageFeaturePrintRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+            return request.results?.first as? VNFeaturePrintObservation
+        } catch {
+            return nil
         }
-        return hash
     }
 
-    /// Counts the number of differing bits between two hashes (Hamming distance).
-    private static func hammingDistance(_ a: UInt64, _ b: UInt64) -> Int {
-        (a ^ b).nonzeroBitCount
+    // MARK: - Generic Clustering
+
+    /// Single-link clustering: items are merged into the same cluster when
+    /// their pairwise distance is at or below `threshold`. Uses union-find.
+    /// Pure function with an injectable `distance` closure so unit tests can
+    /// exercise the clustering logic without Vision or any image I/O.
+    nonisolated static func clusterByDistance<T>(
+        items: [T],
+        threshold: Float,
+        distance: (T, T) -> Float
+    ) -> [[T]] {
+        let count = items.count
+        guard count > 0 else { return [] }
+        var parent = Array(0..<count)
+
+        func findRoot(_ idx: Int) -> Int {
+            var idx = idx
+            while parent[idx] != idx { idx = parent[idx] }
+            return idx
+        }
+
+        for a in 0..<count {
+            for b in (a + 1)..<count {
+                if distance(items[a], items[b]) <= threshold {
+                    let ra = findRoot(a), rb = findRoot(b)
+                    if ra != rb { parent[ra] = rb }
+                }
+            }
+        }
+
+        var components: [Int: [T]] = [:]
+        for idx in 0..<count {
+            let root = findRoot(idx)
+            components[root, default: []].append(items[idx])
+        }
+        return Array(components.values)
     }
 
     // MARK: - Blur Detection Helpers
@@ -747,5 +774,98 @@ final class PhotoAnalyzer {
         let mean = laplacian.reduce(0.0, +) / Double(laplacian.count)
         let variance = laplacian.reduce(0.0) { $0 + ($1 - mean) * ($1 - mean) } / Double(laplacian.count)
         return variance
+    }
+
+    // MARK: - Keep-Best Scoring (#70)
+
+    /// Picks the best photo to keep within a duplicate or similar-shots group.
+    /// Loads sharpness for each member (unless `skipSharpness` is true, used by
+    /// tests that operate without real PHAssets), then delegates to the pure
+    /// `scoreKeepBest` helper below.
+    private static func pickKeepBest(
+        from members: [AssetInfo],
+        skipSharpness: Bool
+    ) async -> (best: AssetInfo, reason: String) {
+        var scored: [(info: AssetInfo, sharpness: Double?)] = []
+        scored.reserveCapacity(members.count)
+        for info in members {
+            let sharpness = skipSharpness
+                ? nil
+                : await computeLaplacianVariance(identifier: info.identifier)
+            scored.append((info, sharpness))
+        }
+
+        let result = scoreKeepBest(members: scored)
+        return (members[result.bestIndex], result.reason)
+    }
+
+    /// Picks the best member of a group by combining sharpness, resolution,
+    /// and file size into a single 0-1 score per member. Each signal is
+    /// normalized within the group, then weighted: sharpness 0.5,
+    /// resolution 0.25, file size 0.25. Sharpness leads because users care
+    /// most about whether the kept photo is in focus; resolution and file
+    /// size act as tiebreakers and as a stand-in when sharpness is unavailable.
+    /// Returns the index of the chosen member and a plain-English reason
+    /// string explaining the choice.
+    nonisolated static func scoreKeepBest(
+        members: [(info: AssetInfo, sharpness: Double?)]
+    ) -> (bestIndex: Int, reason: String) {
+        precondition(!members.isEmpty, "scoreKeepBest requires at least one member")
+
+        // If all sharpness samples are nil (test path or thumbnail loads
+        // failed), fall back to the largest-file heuristic.
+        let allSharpnessNil = members.allSatisfy { $0.sharpness == nil }
+
+        let sharpValues = members.map { $0.sharpness ?? 0 }
+        let resValues = members.map { Double($0.info.pixelWidth * $0.info.pixelHeight) }
+        let sizeValues = members.map { Double($0.info.estimatedFileSize) }
+
+        let normalizedSharp = normalize(sharpValues)
+        let normalizedRes = normalize(resValues)
+        let normalizedSize = normalize(sizeValues)
+
+        // Find best index and capture which signal contributed most to the win.
+        var bestIndex = 0
+        var bestScore = -Double.infinity
+        var bestContribSharp = 0.0
+        var bestContribRes = 0.0
+        var bestContribSize = 0.0
+
+        for i in 0..<members.count {
+            let s = allSharpnessNil ? 0.0 : 0.5 * normalizedSharp[i]
+            let r = (allSharpnessNil ? 0.5 : 0.25) * normalizedRes[i]
+            let z = (allSharpnessNil ? 0.5 : 0.25) * normalizedSize[i]
+            let score = s + r + z
+            if score > bestScore {
+                bestScore = score
+                bestIndex = i
+                bestContribSharp = s
+                bestContribRes = r
+                bestContribSize = z
+            }
+        }
+
+        let reason: String
+        if allSharpnessNil {
+            reason = "Largest file size and highest resolution in the group, suggesting the most detail captured."
+        } else if bestContribSharp >= bestContribRes && bestContribSharp >= bestContribSize {
+            reason = "Sharpest photo in the group with strong resolution and detail."
+        } else if bestContribRes >= bestContribSize {
+            reason = "Highest resolution in the group, suggesting more detail than the others."
+        } else {
+            reason = "Largest file size in the group, suggesting the most detail captured."
+        }
+
+        return (bestIndex, reason)
+    }
+
+    /// Min-max normalize an array to 0-1. All-equal inputs return all-1.0
+    /// so the signal contributes nothing to the score (no false tiebreaker).
+    nonisolated private static func normalize(_ values: [Double]) -> [Double] {
+        guard let minV = values.min(), let maxV = values.max() else { return values.map { _ in 0 } }
+        if maxV - minV < .ulpOfOne {
+            return values.map { _ in 1.0 }
+        }
+        return values.map { ($0 - minV) / (maxV - minV) }
     }
 }

@@ -18,7 +18,7 @@ struct CleanPhotosFlow: View {
             FlowStep(
                 id: "duplicates",
                 title: "Remove duplicates",
-                description: "These are photos with matching size, dimensions, and timing that might be duplicates. We will keep the version with the highest pixel count.",
+                description: "These are photos that look like the same shot taken more than once. We compare them visually using on-device intelligence and suggest keeping the sharpest one.",
                 icon: "plus.square.on.square",
                 isSkippable: true
             ),
@@ -176,8 +176,8 @@ struct CleanPhotosFlow: View {
                         Text(count > 0 ? "Found \(count) duplicate photos" : "No duplicates found")
                             .typography(.subheadline)
                     }
-                    tipRow("We compare dimensions, estimated file size, and when the photos were taken")
-                    tipRow("We keep the version with the highest pixel count")
+                    tipRow("We compare photos visually using Apple's on-device Vision framework, plus dimensions and timing for exact matches")
+                    tipRow("We suggest keeping the sharpest version with the highest resolution and detail")
                     tipRow("iOS keeps deleted photos in Recently Deleted for 30 days")
                 }
             }

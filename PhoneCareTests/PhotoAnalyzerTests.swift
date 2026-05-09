@@ -549,6 +549,148 @@ struct PhotoAnalyzerTests {
         #expect(result.screenRecordingInfos.first?.isScreenRecording == true)
     }
 
+    // MARK: - clusterByDistance (#70)
+
+    @Test("clusterByDistance with empty input returns empty")
+    func clusterByDistance_emptyInput_returnsEmpty() {
+        let clusters: [[Int]] = PhotoAnalyzer.clusterByDistance(
+            items: [],
+            threshold: 1.0,
+            distance: { _, _ in 0 }
+        )
+        #expect(clusters.isEmpty)
+    }
+
+    @Test("clusterByDistance groups items whose pairwise distance is below threshold")
+    func clusterByDistance_belowThreshold_groupsTogether() {
+        // Pairs (0,1) and (2,3) are close; the rest are far apart.
+        let items = [0, 1, 2, 3]
+        let distances: [String: Float] = [
+            "0-1": 0.1, "2-3": 0.1,
+            "0-2": 5.0, "0-3": 5.0, "1-2": 5.0, "1-3": 5.0,
+        ]
+        let clusters = PhotoAnalyzer.clusterByDistance(
+            items: items,
+            threshold: 0.5
+        ) { a, b in
+            let key = "\(min(a, b))-\(max(a, b))"
+            return distances[key] ?? .greatestFiniteMagnitude
+        }
+        // Order of clusters is not guaranteed by union-find; sort each cluster
+        // and the outer list for stable comparison.
+        let normalized = clusters.map { $0.sorted() }.sorted { $0[0] < $1[0] }
+        #expect(normalized == [[0, 1], [2, 3]])
+    }
+
+    @Test("clusterByDistance keeps items separate when distances exceed threshold")
+    func clusterByDistance_aboveThreshold_keepsSeparate() {
+        let clusters = PhotoAnalyzer.clusterByDistance(
+            items: [0, 1, 2],
+            threshold: 0.5,
+            distance: { _, _ in 1.0 }
+        )
+        // Three singletons.
+        #expect(clusters.count == 3)
+        for cluster in clusters {
+            #expect(cluster.count == 1)
+        }
+    }
+
+    @Test("clusterByDistance applies single-link semantics across transitive chains")
+    func clusterByDistance_transitiveSingleLink_chainsCluster() {
+        // A close to B, B close to C, A far from C. Single-link merges all three.
+        let items = ["A", "B", "C"]
+        let distances: [String: Float] = [
+            "A-B": 0.1,
+            "B-C": 0.1,
+            "A-C": 0.9,
+        ]
+        let clusters = PhotoAnalyzer.clusterByDistance(
+            items: items,
+            threshold: 0.5
+        ) { a, b in
+            let key = "\(min(a, b))-\(max(a, b))"
+            return distances[key] ?? .greatestFiniteMagnitude
+        }
+        #expect(clusters.count == 1)
+        #expect(clusters[0].sorted() == ["A", "B", "C"])
+    }
+
+    // MARK: - scoreKeepBest (#70)
+
+    @Test("scoreKeepBest picks the sharpest photo when sharpness data is available")
+    func scoreKeepBest_singleSharpestPhoto_chosen() {
+        let blurry = makeAssetInfo(id: "blurry", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 1_000_000)
+        let sharp = makeAssetInfo(id: "sharp", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 1_000_000)
+
+        let result = PhotoAnalyzer.scoreKeepBest(members: [
+            (info: blurry, sharpness: 50.0),
+            (info: sharp, sharpness: 500.0),
+        ])
+
+        #expect(result.bestIndex == 1)
+        #expect(result.reason.contains("Sharpest"))
+    }
+
+    @Test("scoreKeepBest falls back to file size when all sharpness samples are nil")
+    func scoreKeepBest_allSharpnessNil_fallsBackToFileSize() {
+        let small = makeAssetInfo(id: "small", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 100_000)
+        let big = makeAssetInfo(id: "big", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 5_000_000)
+
+        let result = PhotoAnalyzer.scoreKeepBest(members: [
+            (info: small, sharpness: nil),
+            (info: big, sharpness: nil),
+        ])
+
+        #expect(result.bestIndex == 1)
+        // Fallback reason should mention file size or detail, not sharpness.
+        #expect(!result.reason.contains("Sharpest"))
+        #expect(result.reason.lowercased().contains("file size") || result.reason.lowercased().contains("detail"))
+    }
+
+    @Test("scoreKeepBest uses resolution as a tiebreaker when sharpness ties")
+    func scoreKeepBest_resolutionTiebreaker_chosenWhenSharpnessTied() {
+        let lowRes = makeAssetInfo(id: "low", pixelWidth: 500, pixelHeight: 500, estimatedFileSize: 1_000_000)
+        let highRes = makeAssetInfo(id: "high", pixelWidth: 4000, pixelHeight: 3000, estimatedFileSize: 1_000_000)
+
+        let result = PhotoAnalyzer.scoreKeepBest(members: [
+            (info: lowRes, sharpness: 100.0),
+            (info: highRes, sharpness: 100.0),
+        ])
+
+        #expect(result.bestIndex == 1)
+    }
+
+    @Test("scoreKeepBest reason reflects the dominant signal")
+    func scoreKeepBest_reasonReflectsDominantSignal() {
+        // Sharpness dominates: this should mention "Sharpest".
+        let blurry = makeAssetInfo(id: "blurry", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 1_000_000)
+        let sharp = makeAssetInfo(id: "sharp", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 1_000_000)
+        let sharpResult = PhotoAnalyzer.scoreKeepBest(members: [
+            (info: blurry, sharpness: 10.0),
+            (info: sharp, sharpness: 1000.0),
+        ])
+        #expect(sharpResult.reason.contains("Sharpest"))
+
+        // Sharpness equal, resolution dominates.
+        let lowRes = makeAssetInfo(id: "lowRes", pixelWidth: 500, pixelHeight: 500, estimatedFileSize: 1_000_000)
+        let highRes = makeAssetInfo(id: "highRes", pixelWidth: 4000, pixelHeight: 3000, estimatedFileSize: 1_000_000)
+        let resResult = PhotoAnalyzer.scoreKeepBest(members: [
+            (info: lowRes, sharpness: 100.0),
+            (info: highRes, sharpness: 100.0),
+        ])
+        #expect(resResult.reason.contains("resolution") || resResult.reason.contains("detail"))
+    }
+
+    @Test("scoreKeepBest handles a single-member group cleanly")
+    func scoreKeepBest_singleMember_returnsThatMember() {
+        let only = makeAssetInfo(id: "only", pixelWidth: 1000, pixelHeight: 1000, estimatedFileSize: 1_000_000)
+        let result = PhotoAnalyzer.scoreKeepBest(members: [
+            (info: only, sharpness: 100.0)
+        ])
+        #expect(result.bestIndex == 0)
+    }
+
     @Test("analyzeAssets sorts screen recordings biggest-first")
     func analyzeAssets_screenRecordings_sortedBiggestFirst() async {
         let smaller = makeAssetInfo(
