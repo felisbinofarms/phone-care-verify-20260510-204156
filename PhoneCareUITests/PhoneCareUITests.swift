@@ -62,5 +62,21 @@ final class PhoneCareUITests: XCTestCase {
         XCTAssertTrue(app.buttons["about.contactSupport"].exists)
         XCTAssertTrue(app.buttons["about.rateApp"].exists)
     }
+
+    func testBatteryTrendFreeTierGatesRangesBeyondOneDay() throws {
+        let app = makeApp()
+        app.launch()
+
+        XCTAssertTrue(element("screen.dashboard", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["dashboard.card.battery"].waitForExistence(timeout: 3))
+        app.buttons["dashboard.card.battery"].tap()
+
+        XCTAssertTrue(element("screen.battery", in: app).waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["battery.range.1d"].exists)
+        XCTAssertTrue(app.buttons["battery.range.30d"].exists)
+
+        app.buttons["battery.range.30d"].tap()
+        XCTAssertTrue(app.staticTexts["battery.premiumGate.message"].waitForExistence(timeout: 3))
+    }
 }
 

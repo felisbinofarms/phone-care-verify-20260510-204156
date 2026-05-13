@@ -5,6 +5,16 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      test_scope:
+        description: "Test scope to run"
+        required: false
+        default: "battery"
+        type: choice
+        options:
+          - battery
+          - all
 
 jobs:
   build:
@@ -49,9 +59,29 @@ jobs:
           exit 1
         fi
 
-        xcodebuild test \
-          -project PhoneCare.xcodeproj \
-          -scheme PhoneCare \
-          -destination "platform=iOS Simulator,name=$SIMULATOR_NAME" \
-          -skipPackagePluginValidation \
-          CODE_SIGNING_ALLOWED=NO
+        TEST_SCOPE="${{ github.event.inputs.test_scope }}"
+        if [ -z "$TEST_SCOPE" ]; then
+          TEST_SCOPE="all"
+        fi
+
+        if [ "$TEST_SCOPE" = "battery" ]; then
+          echo "Running battery-focused test slice"
+          xcodebuild test \
+            -project PhoneCare.xcodeproj \
+            -scheme PhoneCare \
+            -destination "platform=iOS Simulator,name=$SIMULATOR_NAME" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            -only-testing:PhoneCareTests/BatteryViewModelTests \
+            -only-testing:PhoneCareTests/BatteryMonitorTests \
+            -only-testing:PhoneCareTests/DashboardViewModelTests \
+            -only-testing:PhoneCareUITests/PhoneCareUITests/testBatteryTrendFreeTierGatesRangesBeyondOneDay
+        else
+          echo "Running full test suite"
+          xcodebuild test \
+            -project PhoneCare.xcodeproj \
+            -scheme PhoneCare \
+            -destination "platform=iOS Simulator,name=$SIMULATOR_NAME" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+        fi

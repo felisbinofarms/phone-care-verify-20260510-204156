@@ -35,11 +35,19 @@ final class DashboardViewModel {
 
     // MARK: - Load
 
-    func refresh(dataManager: DataManager, permissionManager: PermissionManager) {
-        load(dataManager: dataManager, permissionManager: permissionManager)
+    func refresh(
+        dataManager: DataManager,
+        permissionManager: PermissionManager,
+        currentInfo: BatteryInfo? = nil
+    ) {
+        load(dataManager: dataManager, permissionManager: permissionManager, currentInfo: currentInfo)
     }
 
-    func load(dataManager: DataManager, permissionManager: PermissionManager) {
+    func load(
+        dataManager: DataManager,
+        permissionManager: PermissionManager,
+        currentInfo: BatteryInfo? = nil
+    ) {
         isLoading = true
         defer { isLoading = false }
 
@@ -55,7 +63,7 @@ final class DashboardViewModel {
                 duplicatePhotoCount = scan.duplicatePhotoCount
                 duplicatePhotoSize = scan.duplicatePhotoSize
                 duplicateContactCount = scan.duplicateContactCount
-                batteryLevel = scan.batteryLevel
+                batteryLevel = currentInfo?.level ?? scan.batteryLevel
                 batteryHealth = scan.batteryHealth
                 privacyIssueCount = scan.privacyIssueCount
 
@@ -67,7 +75,7 @@ final class DashboardViewModel {
                     totalContacts: scan.contactCount,
                     duplicateContacts: scan.duplicateContactCount,
                     batteryHealth: scan.batteryHealth,
-                    batteryLevel: scan.batteryLevel,
+                    batteryLevel: batteryLevel,
                     totalPermissions: PermissionType.allCases.filter {
                         !PermissionType.unscorable.contains($0)
                     }.count,
@@ -81,9 +89,14 @@ final class DashboardViewModel {
                 healthResult = result
                 healthScore = result.compositeScore
                 quickWins = generateQuickWins(from: scan)
+            } else if let currentInfo {
+                batteryLevel = currentInfo.level
             }
         } catch {
             // Gracefully handle — dashboard shows empty state
+            if let currentInfo {
+                batteryLevel = currentInfo.level
+            }
         }
     }
 

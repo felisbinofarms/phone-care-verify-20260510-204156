@@ -4,6 +4,7 @@ struct BatteryView: View {
     @Environment(DataManager.self) private var dataManager
     @Environment(SubscriptionManager.self) private var subscriptionManager
     @State private var viewModel = BatteryViewModel()
+    @State private var batteryMonitor = BatteryMonitor()
     @State private var showPaywall = false
 
     var body: some View {
@@ -26,12 +27,16 @@ struct BatteryView: View {
             .padding(.bottom, PCTheme.Spacing.xl)
         }
         .background(Color.pcBackground)
+        .accessibilityIdentifier("screen.battery")
         .navigationTitle("Battery")
         .refreshable {
-            viewModel.load(dataManager: dataManager)
+            await refreshBatteryData()
         }
-        .onAppear {
-            viewModel.load(dataManager: dataManager)
+        .task {
+            await refreshBatteryData()
+        }
+        .onDisappear {
+            batteryMonitor.stopMonitoring()
         }
         .sheet(isPresented: $showPaywall) {
             PaywallBottomSheet(trigger: .gatedCTA)
@@ -116,7 +121,7 @@ struct BatteryView: View {
 
     private var capacityUnavailableCard: some View {
         CardView {
-            HStack(spacing: PCTheme.Spacing.md) {
+            HStack(alignment: .top, spacing: PCTheme.Spacing.md) {
                 Image(systemName: "heart.fill")
                     .font(.title3)
                     .foregroundStyle(Color.pcTextSecondary)
@@ -126,25 +131,16 @@ struct BatteryView: View {
                     Text("Battery Capacity")
                         .typography(.subheadline)
 
-                    Text("Battery health details are only available in iPhone Settings.")
+                    Text("iPhone does not share battery health with apps. Open the Settings app, then go to Battery > Battery Health & Charging to see it.")
                         .typography(.footnote, color: .pcTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer()
-
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .fixedSize()
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Battery capacity unavailable. Battery health details are only available in iPhone Settings.")
-        .accessibilityHint("Activate Open Settings button to view in Settings")
+        .accessibilityLabel("Battery capacity unavailable. iPhone does not share battery health with apps. Open the Settings app, then go to Battery, Battery Health and Charging to see it.")
     }
 
     private func statCard(icon: String, title: String, value: String, color: Color) -> some View {
@@ -191,6 +187,7 @@ struct BatteryView: View {
                             .foregroundStyle(viewModel.selectedTimeRange == range ? .white : Color.pcAccent)
                     }
                     .accessibleTapTarget()
+                    .accessibilityIdentifier(range.testIdentifier)
                     .accessibilityAddTraits(viewModel.selectedTimeRange == range ? [.isSelected] : [])
                 }
 
@@ -238,5 +235,12 @@ struct BatteryView: View {
                 .accessibilityElement(children: .combine)
             }
         }
+    }
+
+    private func refreshBatteryData() async {
+        batteryMonitor.startMonitoring()
+        batteryMonitor.readCurrentState()
+        await batteryMonitor.takeDailySnapshotIfNeeded(dataManager: dataManager)
+        viewModel.load(dataManager: dataManager, currentInfo: batteryMonitor.currentInfo)
     }
 }

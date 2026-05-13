@@ -7,6 +7,7 @@ struct DashboardView: View {
     @Environment(AppState.self) private var appState
 
     @State private var viewModel = DashboardViewModel()
+    @State private var batteryMonitor = BatteryMonitor()
     @State private var showPaywall = false
 
     var body: some View {
@@ -40,15 +41,20 @@ struct DashboardView: View {
         .accessibilityIdentifier("screen.dashboard")
         .navigationTitle("Phone Health")
         .refreshable {
-            viewModel.refresh(dataManager: dataManager, permissionManager: permissionManager)
+            await refreshDashboard()
         }
-        .onAppear {
-            viewModel.refresh(dataManager: dataManager, permissionManager: permissionManager)
+        .task {
+            await refreshDashboard()
         }
         .onChange(of: appState.selectedTab) { _, newTab in
             if newTab == .home {
-                viewModel.refresh(dataManager: dataManager, permissionManager: permissionManager)
+                Task {
+                    await refreshDashboard()
+                }
             }
+        }
+        .onDisappear {
+            batteryMonitor.stopMonitoring()
         }
         .sheet(isPresented: $showPaywall) {
             PaywallBottomSheet(trigger: .gatedCTA)
@@ -122,6 +128,7 @@ struct DashboardView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("dashboard.card.\(key)")
     }
 
     @ViewBuilder
@@ -159,5 +166,16 @@ struct DashboardView: View {
         default:
             break
         }
+    }
+
+    private func refreshDashboard() async {
+        batteryMonitor.startMonitoring()
+        batteryMonitor.readCurrentState()
+        await batteryMonitor.takeDailySnapshotIfNeeded(dataManager: dataManager)
+        viewModel.refresh(
+            dataManager: dataManager,
+            permissionManager: permissionManager,
+            currentInfo: batteryMonitor.currentInfo
+        )
     }
 }

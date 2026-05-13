@@ -62,7 +62,8 @@ Tick each box as you go. If something fails, stop, capture a screenshot or scree
 
 - [ ] Current state visible (level, charging, low power mode if on)
 - [ ] At least one snapshot recorded for today
-- [ ] Trend chart visible on premium; gated for free
+- [ ] Trend chart shows 24-hour history on free
+- [ ] 30-day, 90-day, and yearly battery history are gated on free and visible on premium
 - [ ] Tip cards render correctly
 - [ ] Thermal state color is accent or warning, never error
 

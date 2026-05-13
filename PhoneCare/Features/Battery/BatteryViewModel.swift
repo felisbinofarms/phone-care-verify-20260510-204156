@@ -17,6 +17,15 @@ enum BatteryTimeRange: String, CaseIterable, Identifiable {
         case .oneYear:     return 365
         }
     }
+
+    var testIdentifier: String {
+        switch self {
+        case .oneDay: return "battery.range.1d"
+        case .thirtyDays: return "battery.range.30d"
+        case .ninetyDays: return "battery.range.90d"
+        case .oneYear: return "battery.range.1y"
+        }
+    }
 }
 
 struct BatteryTip: Identifiable {
@@ -99,12 +108,14 @@ final class BatteryViewModel {
 
     // MARK: - Load
 
-    func load(dataManager: DataManager) {
+    func load(dataManager: DataManager, currentInfo: BatteryInfo? = nil) {
         isLoading = true
         defer { isLoading = false }
 
         // Load current state from latest scan
         do {
+            let prefs = try dataManager.userPreferences()
+
             if let scan = try dataManager.latestScanResult() {
                 currentLevel = scan.batteryLevel
                 maxCapacity = scan.batteryHealth
@@ -127,11 +138,22 @@ final class BatteryViewModel {
                 }
             }
 
-            tips = generateTips()
+            applyCurrentInfo(currentInfo)
+            tips = prefs.batteryAlerts ? generateTips() : []
         } catch {
+            applyCurrentInfo(currentInfo)
             // Show defaults
             tips = generateTips()
         }
+    }
+
+    private func applyCurrentInfo(_ currentInfo: BatteryInfo?) {
+        guard let currentInfo else { return }
+
+        currentLevel = currentInfo.level
+        isCharging = currentInfo.state == .charging || currentInfo.state == .full
+        thermalState = currentInfo.thermalState.rawValue
+        isLowPowerMode = currentInfo.isLowPowerMode
     }
 
     // MARK: - Tips

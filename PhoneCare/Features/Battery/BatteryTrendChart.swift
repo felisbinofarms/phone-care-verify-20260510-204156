@@ -29,6 +29,7 @@ struct BatteryTrendChart: View {
                 }
             }
         }
+        .accessibilityIdentifier("battery.trend.section")
     }
 
     // MARK: - Chart
@@ -92,7 +93,9 @@ struct BatteryTrendChart: View {
             }
             .frame(height: 200)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(chartAccessibilityLabel)
+            .accessibilityLabel("Battery trend chart")
+            .accessibilityValue(chartAccessibilityValue)
+            .accessibilityHint(chartAccessibilityHint)
 
             // Selected detail
             if let snapshot = selectedSnapshot {
@@ -138,9 +141,10 @@ struct BatteryTrendChart: View {
                 .foregroundStyle(Color.pcTextSecondary)
                 .voiceOverHidden()
 
-            Text("Extended history is a Premium feature")
+            Text("Battery history beyond 24 hours is a Premium feature")
                 .typography(.subheadline, color: .pcTextSecondary)
                 .multilineTextAlignment(.center)
+                .accessibilityIdentifier("battery.premiumGate.message")
 
             Text("Unlock Premium to see 30-day, 90-day, and yearly battery trends.")
                 .typography(.footnote, color: .pcTextSecondary)
@@ -150,6 +154,7 @@ struct BatteryTrendChart: View {
                 onPremiumGate?()
             }
             .primaryCTAStyle()
+            .accessibilityIdentifier("battery.premiumGate.unlock")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, PCTheme.Spacing.lg)
@@ -163,9 +168,19 @@ struct BatteryTrendChart: View {
         })
     }
 
-    private var chartAccessibilityLabel: String {
-        guard !snapshots.isEmpty else { return "Battery trend chart, no data available" }
+    private var chartAccessibilityValue: String {
+        guard !snapshots.isEmpty else { return "No data available" }
         let avg = snapshots.reduce(0.0) { $0 + $1.level } / Double(snapshots.count)
-        return "Battery trend chart showing \(snapshots.count) data points over \(timeRange.rawValue). Average level: \(Int(avg * 100)) percent."
+        if let selectedSnapshot {
+            return "\(snapshots.count) data points over \(timeRange.rawValue). Average level \(Int(avg * 100)) percent. Selected point \(selectedSnapshot.date.shortRelativeFormatted()), \(Int(selectedSnapshot.level * 100)) percent."
+        }
+        return "\(snapshots.count) data points over \(timeRange.rawValue). Average level \(Int(avg * 100)) percent."
+    }
+
+    private var chartAccessibilityHint: String {
+        if snapshots.isEmpty {
+            return "Battery history will appear here after the app collects snapshots over time."
+        }
+        return "Touch and drag across the chart to explore battery levels over time."
     }
 }

@@ -65,8 +65,6 @@ struct BatteryInfo: Sendable {
         }
     }
 
-    /// Deep link to iOS Battery settings for health info
-    static let batterySettingsURL = URL(string: "App-prefs:BATTERY_USAGE")
 }
 
 // MARK: - Battery Monitor
@@ -273,13 +271,4 @@ final class BatteryMonitor {
         return recent.reduce(0.0) { $0 + $1.level } / Double(recent.count)
     }
 
-    // MARK: - Settings Deep Link
-
-    nonisolated func openBatterySettings() async {
-        await MainActor.run {
-            if let url = BatteryInfo.batterySettingsURL {
-                UIApplication.shared.open(url)
-            }
-        }
-    }
 }

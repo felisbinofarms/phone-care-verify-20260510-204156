@@ -143,4 +143,52 @@ struct BatteryViewModelTests {
         #expect(vm.tips.count == firstTipsCount)
         #expect(vm.isLoading == false)
     }
+
+    @Test("load overlays live battery state when current info is provided")
+    func load_withCurrentInfo_overlaysLiveState() {
+        let vm = BatteryViewModel()
+        let dataManager = DataManager(inMemory: true)
+        let currentInfo = BatteryInfo(
+            level: 0.27,
+            state: .charging,
+            thermalState: .serious,
+            isLowPowerMode: true
+        )
+
+        vm.load(dataManager: dataManager, currentInfo: currentInfo)
+
+        #expect(vm.levelPercentage == 27)
+        #expect(vm.isCharging == true)
+        #expect(vm.thermalState == BatteryInfo.ThermalState.serious.rawValue)
+        #expect(vm.isLowPowerMode == true)
+    }
+
+    @Test("load with low live battery suggests low power mode tip")
+    func load_withLowLiveBattery_addsLowPowerTip() {
+        let vm = BatteryViewModel()
+        let dataManager = DataManager(inMemory: true)
+        let currentInfo = BatteryInfo(
+            level: 0.22,
+            state: .unplugged,
+            thermalState: .nominal,
+            isLowPowerMode: false
+        )
+
+        vm.load(dataManager: dataManager, currentInfo: currentInfo)
+
+        #expect(vm.tips.contains(where: { $0.id == "lowPower" }))
+    }
+
+    @Test("load hides tips when battery tips preference is off")
+    func load_withBatteryTipsDisabled_hidesTips() throws {
+        let vm = BatteryViewModel()
+        let dataManager = DataManager(inMemory: true)
+        let prefs = try dataManager.userPreferences()
+        prefs.batteryAlerts = false
+        try dataManager.saveContext()
+
+        vm.load(dataManager: dataManager)
+
+        #expect(vm.tips.isEmpty)
+    }
 }

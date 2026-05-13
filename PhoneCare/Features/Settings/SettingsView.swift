@@ -107,7 +107,7 @@ struct SettingsView: View {
 
                 Divider().foregroundStyle(Color.pcBorder)
 
-                Toggle("Battery tips", isOn: $viewModel.batteryAlerts)
+                Toggle("Show battery tips in app", isOn: $viewModel.batteryAlerts)
                     .typography(.subheadline)
                     .tint(Color.pcAccent)
                     .accessibilityIdentifier("settings.notification.battery")

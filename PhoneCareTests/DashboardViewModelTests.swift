@@ -135,6 +135,27 @@ struct DashboardViewModelTests {
         #expect(vm.healthScore == 0)
     }
 
+    @Test("refresh overlays live battery level when current info is provided")
+    func refresh_withCurrentInfo_overlaysBatteryLevel() {
+        let vm = DashboardViewModel()
+        let dataManager = DataManager(inMemory: true)
+        let permManager = PermissionManager()
+        let currentInfo = BatteryInfo(
+            level: 0.34,
+            state: .unplugged,
+            thermalState: .nominal,
+            isLowPowerMode: false
+        )
+
+        vm.refresh(
+            dataManager: dataManager,
+            permissionManager: permManager,
+            currentInfo: currentInfo
+        )
+
+        #expect(vm.descriptionForCard("battery") == "Battery at 34%")
+    }
+
     // MARK: - quickWins populated when health score is low
 
     @Test("quickWins injected with two items are accessible on the view model")

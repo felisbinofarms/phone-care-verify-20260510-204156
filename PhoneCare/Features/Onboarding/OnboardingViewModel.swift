@@ -268,7 +268,7 @@ final class OnboardingViewModel {
                 items.append(PlanItem(
                     icon: "battery.25percent",
                     title: "Battery tips",
-                    detail: "Low Power Mode is on. We have tips to help your battery last longer.",
+                    detail: "Low Power Mode is on right now. We will show tips to help your battery last longer.",
                     priority: priority
                 ))
             }
@@ -338,6 +338,7 @@ final class OnboardingViewModel {
         batteryMonitor.startMonitoring()
         batteryMonitor.readCurrentState()
         scanResults.batteryInfo = batteryMonitor.currentInfo
+        batteryMonitor.stopMonitoring()
         scanProgress = 0.8
 
         // Stage 5: Privacy
@@ -389,6 +390,17 @@ final class OnboardingViewModel {
             if let storage = scanResults.storageResult,
                let photos = scanResults.photoResult,
                let contacts = scanResults.contactResult {
+                if let battery = scanResults.batteryInfo {
+                    let snapshot = BatterySnapshot(
+                        level: battery.level,
+                        isCharging: battery.state == .charging || battery.state == .full,
+                        thermalState: battery.thermalState.rawValue,
+                        maxCapacity: nil,
+                        isLowPowerMode: battery.isLowPowerMode
+                    )
+                    try dataManager.save(snapshot)
+                }
+
                 let scanResult = ScanResult(
                     totalStorage: storage.totalBytes,
                     usedStorage: storage.usedBytes,
